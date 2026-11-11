@@ -1,475 +1,616 @@
 package com.offlinemesh.messenger.data
 
-import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.offlinemesh.messenger.core.crypto.CryptoException
 import com.offlinemesh.messenger.core.crypto.CryptoManager
+import com.offlinemesh.messenger.core.crypto.DuplicateCiphertextException
+import com.offlinemesh.messenger.core.crypto.IdentityChangedException
+import com.offlinemesh.messenger.core.crypto.NoSessionYetException
 import com.offlinemesh.messenger.core.db.AppDatabase
 import com.offlinemesh.messenger.core.db.ConversationEntity
+import com.offlinemesh.messenger.core.db.FileTransferEntity
 import com.offlinemesh.messenger.core.db.MessageEntity
-import com.offlinemesh.messenger.core.db.OutboxEntity
-import com.offlinemesh.messenger.core.db.SeenPacketEntity
-import com.offlinemesh.messenger.core.mesh.FileChunkMeta
+import com.offlinemesh.messenger.core.db.RelayEntity
 import com.offlinemesh.messenger.core.mesh.FileChunker
 import com.offlinemesh.messenger.core.mesh.MeshManager
-import com.offlinemesh.messenger.core.mesh.MeshPacket
-import com.offlinemesh.messenger.core.mesh.MeshPacketHandler
+import com.offlinemesh.messenger.core.mesh.PacketCodec
+import com.offlinemesh.messenger.core.mesh.PacketHeader
 import com.offlinemesh.messenger.core.mesh.PacketType
+import com.offlinemesh.messenger.core.mesh.PeerInfo
+import com.offlinemesh.messenger.core.mesh.RoutingPolicy
 import kotlinx.coroutines.flow.Flow
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.yield
+import kotlinx.serialization.Serializable
 import java.io.File
 import java.util.UUID
 
+object MessageType {
+    const val TEXT = "TEXT"
+    const val FILE = "FILE"
+    const val VOICE = "VOICE"
+}
+
+object MessageStatus {
+    const val QUEUED = "QUEUED"
+    const val SENT = "SENT"
+    const val DELIVERED = "DELIVERED"
+    const val FAILED = "FAILED"
+    const val RECEIVED = "RECEIVED"
+}
+
+@Serializable
+data class FileChunkMeta(
+    val fileId: String,
+    val name: String,
+    val index: Int,
+    val total: Int,
+    val size: Long = 0L,
+    val voice: Boolean = false
+)
+
+/**
+ * Conversation/message logic.
+ *
+ * Outgoing plaintext exists only in the (SQLCipher-encrypted) message table. It is encrypted
+ * per recipient at send time, and the resulting ciphertext is what enters the relay queue for
+ * store-and-forward. Relaying other people's packets only ever moves ciphertext.
+ */
 class ChatRepository(
-    private val context: Context,
     private val db: AppDatabase,
     private val crypto: CryptoManager,
     private val mesh: MeshManager,
     private val files: FileRepository,
-    private val settings: SettingsRepository
-) : MeshPacketHandler {
+    private val settings: SettingsRepository,
+    private val contacts: ContactRepository
+) : MeshManager.PacketHandler {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val conversations = db.conversationDao()
+    private val messages = db.messageDao()
+    private val relays = db.relayDao()
+    private val transfers = db.fileTransferDao()
+    private val json = PacketCodec.json
 
-    fun observeConversations(): Flow<List<ConversationEntity>> = db.conversationDao().observeAll()
+    // --------------------------------------------------------------- observation
+
+    fun observeConversations(): Flow<List<ConversationEntity>> = conversations.observeAll()
 
     fun observeMessages(conversationId: String): Flow<List<MessageEntity>> =
-        db.messageDao().observeForConversation(conversationId)
+        messages.observeForConversation(conversationId)
 
-    suspend fun ensureDirectConversation(peerDeviceId: String, displayName: String): String {
-        val id = "dm:$peerDeviceId"
-        val existing = db.conversationDao().getById(id)
+    fun observePeers() = mesh.peerFlow
+
+    fun observeRunning() = mesh.running
+
+    fun observeContacts() = contacts.observeContacts()
+
+    suspend fun conversation(id: String): ConversationEntity? = conversations.getById(id)
+
+    suspend fun markRead(conversationId: String) = conversations.markRead(conversationId)
+
+    suspend fun deleteConversation(conversationId: String) {
+        messages.deleteForConversation(conversationId)
+        conversations.deleteById(conversationId)
+    }
+
+    suspend fun exportForOpening(sealedPath: String?, displayName: String): File? {
+        if (sealedPath.isNullOrBlank()) return null
+        return files.exportForOpening(File(sealedPath), displayName)
+    }
+
+    // ------------------------------------------------------------- conversations
+
+    suspend fun ensureDirectConversation(deviceId: String, title: String): String {
+        val existing = conversations.getById(deviceId)
+        val resolvedTitle = title.ifBlank { existing?.title ?: deviceId.take(8) }
         if (existing == null) {
-            db.conversationDao().upsert(
+            val now = System.currentTimeMillis()
+            conversations.upsert(
                 ConversationEntity(
-                    id = id,
-                    title = displayName,
+                    id = deviceId,
+                    title = resolvedTitle,
                     isGroup = false,
-                    createdAt = System.currentTimeMillis(),
-                    memberIds = peerDeviceId
+                    memberIds = deviceId,
+                    createdAt = now,
+                    lastMessageAt = now
                 )
             )
+        } else if (existing.title != resolvedTitle) {
+            conversations.upsert(existing.copy(title = resolvedTitle))
         }
-        return id
+        return deviceId
     }
 
-    suspend fun ensureGroupConversation(groupId: String, title: String, memberIds: List<String>): String {
-        val id = "group:$groupId"
-        val existing = db.conversationDao().getById(id)
-        if (existing == null) {
-            db.conversationDao().upsert(
-                ConversationEntity(
-                    id = id,
-                    title = title,
-                    isGroup = true,
-                    createdAt = System.currentTimeMillis(),
-                    memberIds = memberIds.joinToString(",")
-                )
-            )
-        }
-        return id
-    }
-
-    suspend fun markRead(conversationId: String) {
-        db.conversationDao().markRead(conversationId)
-    }
-
-    suspend fun sendText(conversationId: String, body: String) {
-        val myId = settings.getDeviceId()
-        val conversation = db.conversationDao().getById(conversationId) ?: return
-        val messageId = UUID.randomUUID().toString()
+    suspend fun createGroup(name: String, memberIds: List<String>): String {
+        val id = "group:" + UUID.randomUUID().toString()
+        val me = settings.deviceId()
+        val members = (memberIds + me).filter { it.isNotBlank() }.distinct()
         val now = System.currentTimeMillis()
-        val message = MessageEntity(
-            id = messageId,
+        conversations.upsert(
+            ConversationEntity(
+                id = id,
+                title = name.ifBlank { "Group" },
+                isGroup = true,
+                memberIds = members.joinToString(","),
+                createdAt = now,
+                lastMessageAt = now
+            )
+        )
+        return id
+    }
+
+    private fun membersOf(conversation: ConversationEntity): List<String> =
+        conversation.memberIds.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    private suspend fun targetsOf(conversation: ConversationEntity): List<String> {
+        val me = settings.deviceId()
+        return membersOf(conversation).filter { it != me }
+    }
+
+    // -------------------------------------------------------------------- sending
+
+    suspend fun sendText(conversationId: String, text: String) {
+        val body = text.trim()
+        if (body.isEmpty()) return
+        val conversation = conversations.getById(conversationId) ?: return
+        val msgId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val entity = MessageEntity(
+            id = msgId,
             conversationId = conversationId,
-            senderDeviceId = myId,
-            type = "TEXT",
+            senderDeviceId = settings.deviceId(),
+            outgoing = true,
+            type = MessageType.TEXT,
             body = body,
             timestamp = now,
-            status = "QUEUED"
+            status = MessageStatus.QUEUED
         )
-        db.messageDao().insert(message)
-        db.conversationDao().updateLastMessage(conversationId, now, body, 0)
-
-        val targets = if (conversation.isGroup) {
-            conversation.memberIds.split(",").filter { it.isNotEmpty() && it != myId }
-        } else {
-            listOf(conversation.memberIds)
-        }
-        for (target in targets) {
-            try {
-                val encrypted = crypto.encrypt(target, body.toByteArray(Charsets.UTF_8))
-                val packet = MeshPacket(
-                    packetId = UUID.randomUUID().toString(),
-                    messageId = messageId,
-                    fromDeviceId = myId,
-                    toDeviceId = target,
-                    groupId = if (conversation.isGroup) conversationId else null,
-                    type = PacketType.TEXT,
-                    ttl = MeshPacket.DEFAULT_TTL,
-                    hopCount = 0,
-                    timestamp = now,
-                    payload = Base64.encodeToString(encrypted, Base64.NO_WRAP)
-                )
-                db.outboxDao().insert(
-                    OutboxEntity(
-                        packetId = packet.packetId,
-                        packetJson = json.encodeToString(packet),
-                        toDeviceId = target,
-                        createdAt = now
-                    )
-                )
-                if (mesh.sendToDevice(packet, target)) {
-                    db.messageDao().updateStatus(messageId, "SENT")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "sendText failed for $target", e)
-            }
-        }
+        messages.upsert(entity)
+        conversations.updateLastMessage(conversationId, now, previewOf(body), 0)
+        dispatchText(entity, conversation, replaceQueued = false)
     }
 
-    suspend fun sendVoice(conversationId: String, file: File, durationMs: Long) {
-        val myId = settings.getDeviceId()
-        val conversation = db.conversationDao().getById(conversationId) ?: return
-        val messageId = UUID.randomUUID().toString()
+    suspend fun sendFile(conversationId: String, source: File, displayName: String) {
+        val conversation = conversations.getById(conversationId) ?: return
+        if (source.length() > FileChunker.MAX_FILE_SIZE) {
+            throw IllegalArgumentException("file too large")
+        }
+        val msgId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
-        val message = MessageEntity(
-            id = messageId,
-            conversationId = conversationId,
-            senderDeviceId = myId,
-            type = "VOICE",
-            body = "",
-            timestamp = now,
-            status = "QUEUED",
-            filePath = file.absolutePath,
-            fileName = file.name,
-            durationMs = durationMs
+        val stored = files.storeOutgoing(source, displayName, isVoice = false, id = msgId)
+        messages.upsert(
+            MessageEntity(
+                id = msgId,
+                conversationId = conversationId,
+                senderDeviceId = settings.deviceId(),
+                outgoing = true,
+                type = MessageType.FILE,
+                body = displayName,
+                timestamp = now,
+                status = MessageStatus.QUEUED,
+                filePath = stored.file.absolutePath,
+                fileName = displayName,
+                fileSize = stored.size
+            )
         )
-        db.messageDao().insert(message)
-        db.conversationDao().updateLastMessage(conversationId, now, "🎤 Voice note", 0)
-
-        val bytes = file.readBytes()
-        val targets = if (conversation.isGroup) {
-            conversation.memberIds.split(",").filter { it.isNotEmpty() && it != myId }
-        } else {
-            listOf(conversation.memberIds)
-        }
-        for (target in targets) {
-            try {
-                val encrypted = crypto.encrypt(target, bytes)
-                val packet = MeshPacket(
-                    packetId = UUID.randomUUID().toString(),
-                    messageId = messageId,
-                    fromDeviceId = myId,
-                    toDeviceId = target,
-                    groupId = if (conversation.isGroup) conversationId else null,
-                    type = PacketType.VOICE,
-                    ttl = MeshPacket.DEFAULT_TTL,
-                    hopCount = 0,
-                    timestamp = now,
-                    payload = Base64.encodeToString(encrypted, Base64.NO_WRAP)
-                )
-                db.outboxDao().insert(
-                    OutboxEntity(
-                        packetId = packet.packetId,
-                        packetJson = json.encodeToString(packet),
-                        toDeviceId = target,
-                        createdAt = now
-                    )
-                )
-                if (mesh.sendToDevice(packet, target)) {
-                    db.messageDao().updateStatus(messageId, "SENT")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "sendVoice failed", e)
-            }
-        }
+        conversations.updateLastMessage(conversationId, now, displayName, 0)
+        dispatchFile(msgId, conversation, source, displayName, isVoice = false)
     }
 
-    suspend fun sendFile(conversationId: String, file: File, fileName: String) {
-        val myId = settings.getDeviceId()
-        val conversation = db.conversationDao().getById(conversationId) ?: return
-        if (file.length() > FileChunker.MAX_FILE_SIZE) return
-        val fileId = UUID.randomUUID().toString()
-        val messageId = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        val total = FileChunker.chunkCount(file)
-        val message = MessageEntity(
-            id = messageId,
-            conversationId = conversationId,
-            senderDeviceId = myId,
-            type = "FILE",
-            body = fileName,
-            timestamp = now,
-            status = "QUEUED",
-            filePath = file.absolutePath,
-            fileName = fileName
-        )
-        db.messageDao().insert(message)
-        db.conversationDao().updateLastMessage(conversationId, now, "📎 $fileName", 0)
-
-        val targets = if (conversation.isGroup) {
-            conversation.memberIds.split(",").filter { it.isNotEmpty() && it != myId }
-        } else {
-            listOf(conversation.memberIds)
+    suspend fun sendVoice(conversationId: String, source: File, durationMs: Long) {
+        val conversation = conversations.getById(conversationId) ?: return
+        if (source.length() > FileChunker.MAX_FILE_SIZE) {
+            throw IllegalArgumentException("file too large")
         }
+        val msgId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val stored = files.storeOutgoing(source, "voice.m4a", isVoice = true, id = msgId)
+        messages.upsert(
+            MessageEntity(
+                id = msgId,
+                conversationId = conversationId,
+                senderDeviceId = settings.deviceId(),
+                outgoing = true,
+                type = MessageType.VOICE,
+                body = "voice",
+                timestamp = now,
+                status = MessageStatus.QUEUED,
+                filePath = stored.file.absolutePath,
+                fileName = "voice.m4a",
+                fileSize = stored.size,
+                durationMs = durationMs
+            )
+        )
+        conversations.updateLastMessage(conversationId, now, "voice", 0)
+        dispatchFile(msgId, conversation, source, "voice.m4a", isVoice = true)
+    }
+
+    private suspend fun dispatchText(
+        message: MessageEntity,
+        conversation: ConversationEntity,
+        replaceQueued: Boolean
+    ) {
+        val targets = targetsOf(conversation)
+        if (replaceQueued) relays.deleteForMessage(message.id)
+        var handedOff = true
         for (target in targets) {
+            val plaintext = message.body.toByteArray(Charsets.UTF_8)
+            val body = try {
+                crypto.encrypt(target, plaintext)
+            } catch (e: NoSessionYetException) {
+                handedOff = false
+                continue
+            } catch (e: IdentityChangedException) {
+                handedOff = false
+                continue
+            } catch (e: CryptoException) {
+                handedOff = false
+                continue
+            }
+            val header = header(
+                type = PacketType.TEXT,
+                conversation = conversation,
+                target = target,
+                msgId = message.id
+            )
+            if (!handOff(header, body)) handedOff = false
+        }
+        messages.updateStatus(
+            message.id,
+            if (handedOff) MessageStatus.SENT else MessageStatus.QUEUED
+        )
+    }
+
+    private suspend fun dispatchFile(
+        msgId: String,
+        conversation: ConversationEntity,
+        source: File,
+        displayName: String,
+        isVoice: Boolean
+    ) {
+        val total = FileChunker.chunkCount(source)
+        val size = source.length()
+        val targets = targetsOf(conversation)
+        var handedOff = true
+        val type = if (isVoice) PacketType.VOICE else PacketType.FILE_CHUNK
+        try {
             for (index in 0 until total) {
-                try {
-                    val chunk = FileChunker.readChunk(file, index)
-                    val encrypted = crypto.encrypt(target, chunk)
-                    val meta = FileChunkMeta(fileId = fileId, fileName = fileName, index = index, total = total)
-                    val packet = MeshPacket(
-                        packetId = UUID.randomUUID().toString(),
-                        messageId = messageId,
-                        fromDeviceId = myId,
-                        toDeviceId = target,
-                        groupId = if (conversation.isGroup) conversationId else null,
-                        type = PacketType.FILE_CHUNK,
-                        ttl = MeshPacket.DEFAULT_TTL,
-                        hopCount = 0,
-                        timestamp = now,
-                        payload = Base64.encodeToString(encrypted, Base64.NO_WRAP),
-                        metadata = json.encodeToString(meta)
+                val chunk = FileChunker.readChunk(source, index)
+                val meta = json.encodeToString(
+                    FileChunkMeta.serializer(),
+                    FileChunkMeta(msgId, displayName, index, total, size, isVoice)
+                )
+                for (target in targets) {
+                    val body = try {
+                        crypto.encrypt(target, chunk)
+                    } catch (e: NoSessionYetException) {
+                        handedOff = false
+                        continue
+                    } catch (e: IdentityChangedException) {
+                        handedOff = false
+                        continue
+                    } catch (e: CryptoException) {
+                        handedOff = false
+                        continue
+                    }
+                    val header = header(
+                        type = type,
+                        conversation = conversation,
+                        target = target,
+                        msgId = msgId,
+                        meta = meta
                     )
-                    db.outboxDao().insert(
-                        OutboxEntity(
-                            packetId = packet.packetId,
-                            packetJson = json.encodeToString(packet),
-                            toDeviceId = target,
-                            createdAt = now
-                        )
-                    )
-                    mesh.sendToDevice(packet, target)
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendFile chunk failed", e)
+                    if (!handOff(header, body)) handedOff = false
                 }
+                yield()
             }
+        } finally {
+            // The plaintext copy in the cache is no longer needed: the sealed copy is at rest.
+            source.delete()
         }
-        db.messageDao().updateStatus(messageId, "SENT")
+        messages.updateStatus(msgId, if (handedOff) MessageStatus.SENT else MessageStatus.QUEUED)
     }
 
-    override suspend fun onPacketReceived(packet: MeshPacket, fromEndpoint: String) {
-        val myId = settings.getDeviceId()
-        val inserted = db.seenPacketDao().insertIfAbsent(
-            SeenPacketEntity(packetId = packet.packetId, seenAt = System.currentTimeMillis())
+    private fun header(
+        type: PacketType,
+        conversation: ConversationEntity,
+        target: String,
+        msgId: String,
+        meta: String = ""
+    ): PacketHeader {
+        val now = System.currentTimeMillis()
+        return PacketHeader(
+            packetId = UUID.randomUUID().toString(),
+            type = type,
+            from = mesh.deviceId(),
+            to = target,
+            groupId = if (conversation.isGroup) conversation.id else null,
+            groupName = if (conversation.isGroup) conversation.title else null,
+            msgId = msgId,
+            createdAt = now,
+            expiresAt = RoutingPolicy.expiryFrom(now),
+            ttl = RoutingPolicy.DEFAULT_TTL,
+            meta = meta
         )
-        if (inserted == -1L) return
+    }
 
-        if (packet.type == PacketType.ACK) {
-            db.outboxDao().deleteByPacketId(packet.messageId)
-            db.messageDao().updateStatusByPacketId(packet.messageId, "DELIVERED")
+    /**
+     * Stores the ciphertext for store-and-forward and tries to push it now.
+     * @return true when it left the device.
+     */
+    private suspend fun handOff(header: PacketHeader, body: ByteArray): Boolean {
+        if (header.expiresAt <= System.currentTimeMillis()) return false
+        if (relays.count() < MAX_RELAY_ENTRIES) {
+            relays.insertIfAbsent(
+                RelayEntity(
+                    packetId = header.packetId,
+                    headerJson = json.encodeToString(PacketHeader.serializer(), header),
+                    bodyBase64 = Base64.encodeToString(body, Base64.NO_WRAP),
+                    msgId = header.msgId,
+                    targetDeviceId = header.to,
+                    createdAt = header.createdAt,
+                    expiresAt = header.expiresAt
+                )
+            )
+        }
+        if (header.to != null && mesh.sendTo(header.to, header, body)) {
+            relays.delete(header.packetId)
+            return true
+        }
+        // No direct route: let the neighbours carry it (they will forward it hop by hop).
+        mesh.broadcast(header, body)
+        return false
+    }
+
+    // ------------------------------------------------------------------ receiving
+
+    override suspend fun onPacket(header: PacketHeader, body: ByteArray) {
+        val plaintext = try {
+            crypto.decrypt(header.from, body)
+        } catch (e: DuplicateCiphertextException) {
+            // Retransmission of something we already accepted: just re-acknowledge it.
+            sendAck(header)
+            return
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not decrypt ${header.type} from ${header.from}: ${e.message}")
             return
         }
 
-        val isForMe = packet.toDeviceId == null || packet.toDeviceId == myId
-        if (!isForMe) return
-
-        when (packet.type) {
-            PacketType.TEXT -> {
-                try {
-                    val plain = crypto.decrypt(packet.fromDeviceId, Base64.decode(packet.payload, Base64.NO_WRAP))
-                    val body = String(plain, Charsets.UTF_8)
-                    val conversationId = packet.groupId ?: "dm:${packet.fromDeviceId}"
-                    ensureConversationForIncoming(conversationId, packet)
-                    if (db.messageDao().getById(packet.messageId) == null) {
-                        db.messageDao().insert(
-                            MessageEntity(
-                                id = packet.messageId,
-                                conversationId = conversationId,
-                                senderDeviceId = packet.fromDeviceId,
-                                type = "TEXT",
-                                body = body,
-                                timestamp = packet.timestamp,
-                                status = "DELIVERED",
-                                packetId = packet.packetId
-                            )
-                        )
-                        db.conversationDao().updateLastMessage(conversationId, packet.timestamp, body, 1)
-                    }
-                    sendAck(packet)
-                } catch (e: Exception) {
-                    Log.e(TAG, "TEXT decrypt failed", e)
-                }
-            }
-            PacketType.VOICE -> {
-                try {
-                    val plain = crypto.decrypt(packet.fromDeviceId, Base64.decode(packet.payload, Base64.NO_WRAP))
-                    val saved = files.saveVoiceBytes(plain)
-                    val conversationId = packet.groupId ?: "dm:${packet.fromDeviceId}"
-                    ensureConversationForIncoming(conversationId, packet)
-                    if (db.messageDao().getById(packet.messageId) == null) {
-                        db.messageDao().insert(
-                            MessageEntity(
-                                id = packet.messageId,
-                                conversationId = conversationId,
-                                senderDeviceId = packet.fromDeviceId,
-                                type = "VOICE",
-                                body = "",
-                                timestamp = packet.timestamp,
-                                status = "DELIVERED",
-                                filePath = saved.absolutePath,
-                                fileName = saved.name,
-                                packetId = packet.packetId
-                            )
-                        )
-                        db.conversationDao().updateLastMessage(conversationId, packet.timestamp, "🎤 Voice note", 1)
-                    }
-                    sendAck(packet)
-                } catch (e: Exception) {
-                    Log.e(TAG, "VOICE decrypt failed", e)
-                }
-            }
-            PacketType.FILE_CHUNK -> {
-                try {
-                    val plain = crypto.decrypt(packet.fromDeviceId, Base64.decode(packet.payload, Base64.NO_WRAP))
-                    val meta: FileChunkMeta = json.decodeFromString(packet.metadata)
-                    files.saveChunk(meta.fileId, meta.index, plain)
-                    val existing = db.fileTransferDao().getById(meta.fileId)
-                    val received = (existing?.receivedChunks ?: 0) + 1
-                    val conversationId = packet.groupId ?: "dm:${packet.fromDeviceId}"
-                    if (existing == null) {
-                        db.fileTransferDao().upsert(
-                            com.offlinemesh.messenger.core.db.FileTransferEntity(
-                                fileId = meta.fileId,
-                                conversationId = conversationId,
-                                fileName = meta.fileName,
-                                totalChunks = meta.total,
-                                receivedChunks = received,
-                                status = "RECEIVING",
-                                outputPath = ""
-                            )
-                        )
-                    } else {
-                        db.fileTransferDao().updateProgress(meta.fileId, received, "RECEIVING")
-                    }
-                    if (received >= meta.total) {
-                        val assembled = files.assemble(meta.fileId, meta.fileName)
-                        ensureConversationForIncoming(conversationId, packet)
-                        if (db.messageDao().getById(packet.messageId) == null) {
-                            db.messageDao().insert(
-                                MessageEntity(
-                                    id = packet.messageId,
-                                    conversationId = conversationId,
-                                    senderDeviceId = packet.fromDeviceId,
-                                    type = "FILE",
-                                    body = meta.fileName,
-                                    timestamp = packet.timestamp,
-                                    status = "DELIVERED",
-                                    filePath = assembled.absolutePath,
-                                    fileName = meta.fileName,
-                                    packetId = packet.packetId
-                                )
-                            )
-                            db.conversationDao().updateLastMessage(conversationId, packet.timestamp, "📎 ${meta.fileName}", 1)
-                        }
-                        db.fileTransferDao().updateProgress(meta.fileId, received, "COMPLETE")
-                    }
-                    sendAck(packet)
-                } catch (e: Exception) {
-                    Log.e(TAG, "FILE_CHUNK failed", e)
-                }
-            }
-            else -> {
-            }
+        when (header.type) {
+            PacketType.TEXT -> onText(header, plaintext)
+            PacketType.FILE_CHUNK, PacketType.VOICE -> onChunk(header, plaintext)
+            else -> Unit
         }
+        sendAck(header)
     }
 
-    override suspend fun onPeerHello(peerDeviceId: String, displayName: String, endpointId: String) {
-        val contact = db.contactDao().getByDeviceId(peerDeviceId)
-        if (contact == null) {
-            db.contactDao().upsert(
-                com.offlinemesh.messenger.core.db.ContactEntity(
-                    deviceId = peerDeviceId,
-                    displayName = displayName,
-                    addedAt = System.currentTimeMillis(),
-                    lastSeenAt = System.currentTimeMillis()
-                )
+    private suspend fun onText(header: PacketHeader, plaintext: ByteArray) {
+        val conversationId = conversationFor(header)
+        val msgId = header.msgId.ifBlank { header.packetId }
+        if (messages.getById(msgId) != null) return
+        val body = String(plaintext, Charsets.UTF_8)
+        messages.upsert(
+            MessageEntity(
+                id = msgId,
+                conversationId = conversationId,
+                senderDeviceId = header.from,
+                outgoing = false,
+                type = MessageType.TEXT,
+                body = body,
+                timestamp = header.createdAt,
+                status = MessageStatus.RECEIVED,
+                packetId = header.packetId
             )
-        } else {
-            db.contactDao().updateLastSeen(peerDeviceId, System.currentTimeMillis())
-        }
-        flushOutboxFor(peerDeviceId)
-    }
-
-    suspend fun flushOutboxFor(deviceId: String) {
-        val entries = db.outboxDao().getForDevice(deviceId)
-        for (entry in entries) {
-            try {
-                val packet: MeshPacket = json.decodeFromString(entry.packetJson)
-                if (mesh.sendToDevice(packet, deviceId)) {
-                    db.messageDao().updateStatusByPacketId(packet.packetId, "SENT")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "flush failed", e)
-            }
-        }
-    }
-
-    suspend fun retryPending() {
-        val now = System.currentTimeMillis()
-        val entries = db.outboxDao().getAll()
-        for (entry in entries) {
-            if (entry.nextRetryAt > now) continue
-            try {
-                val packet: MeshPacket = json.decodeFromString(entry.packetJson)
-                val target = entry.toDeviceId
-                val sent = if (target != null) mesh.sendToDevice(packet, target) else false
-                if (!sent) {
-                    val backoff = minOf(300_000L, 10_000L * (1 shl minOf(entry.retryCount, 5)))
-                    db.outboxDao().updateRetry(entry.packetId, entry.retryCount + 1, now + backoff)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "retry failed", e)
-            }
-        }
-    }
-
-    private suspend fun ensureConversationForIncoming(conversationId: String, packet: MeshPacket) {
-        val existing = db.conversationDao().getById(conversationId)
-        if (existing != null) return
-        if (packet.groupId != null) {
-            db.conversationDao().upsert(
-                ConversationEntity(
-                    id = conversationId,
-                    title = "Group",
-                    isGroup = true,
-                    createdAt = System.currentTimeMillis(),
-                    memberIds = packet.fromDeviceId
-                )
-            )
-        } else {
-            val contact = db.contactDao().getByDeviceId(packet.fromDeviceId)
-            db.conversationDao().upsert(
-                ConversationEntity(
-                    id = conversationId,
-                    title = contact?.displayName ?: packet.fromDeviceId.take(8),
-                    isGroup = false,
-                    createdAt = System.currentTimeMillis(),
-                    memberIds = packet.fromDeviceId
-                )
-            )
-        }
-    }
-
-    private fun sendAck(packet: MeshPacket) {
-        val ack = MeshPacket(
-            packetId = UUID.randomUUID().toString(),
-            messageId = packet.packetId,
-            fromDeviceId = packet.toDeviceId ?: "",
-            toDeviceId = packet.fromDeviceId,
-            groupId = null,
-            type = PacketType.ACK,
-            ttl = MeshPacket.DEFAULT_TTL,
-            hopCount = 0,
-            timestamp = System.currentTimeMillis(),
-            payload = packet.messageId
         )
-        mesh.sendToDevice(ack, packet.fromDeviceId)
+        conversations.updateLastMessage(conversationId, header.createdAt, previewOf(body), 1)
     }
 
-    companion object {
-        private const val TAG = "ChatRepository"
+    private suspend fun onChunk(header: PacketHeader, plaintext: ByteArray) {
+        val meta = try {
+            json.decodeFromString(FileChunkMeta.serializer(), header.meta)
+        } catch (e: Exception) {
+            Log.w(TAG, "Chunk without metadata", e)
+            return
+        }
+        val conversationId = conversationFor(header)
+        val chunkFile = File(files.stagingFileFor(meta.fileId), "chunk_${meta.index}.bin")
+        val isNew = !chunkFile.exists()
+        files.writeChunk(meta.fileId, meta.index, plaintext)
+
+        val transfer = transfers.getById(meta.fileId)
+        val received = ((transfer?.receivedChunks ?: 0) + if (isNew) 1 else 0)
+            .coerceAtMost(meta.total)
+        if (transfer == null) {
+            transfers.upsert(
+                FileTransferEntity(
+                    fileId = meta.fileId,
+                    conversationId = conversationId,
+                    fileName = meta.name,
+                    totalChunks = meta.total,
+                    receivedChunks = received,
+                    status = "IN_PROGRESS",
+                    outputPath = "",
+                    createdAt = header.createdAt
+                )
+            )
+        } else {
+            transfers.updateProgress(
+                meta.fileId,
+                received,
+                if (received >= meta.total) "ASSEMBLING" else "IN_PROGRESS"
+            )
+        }
+
+        if (received >= meta.total) {
+            completeTransfer(meta, header, conversationId)
+        }
+    }
+
+    private suspend fun completeTransfer(
+        meta: FileChunkMeta,
+        header: PacketHeader,
+        conversationId: String
+    ) {
+        val stored = files.completeIncoming(meta.fileId, meta.name, meta.total, meta.voice) ?: return
+        val msgId = header.msgId.ifBlank { meta.fileId }
+        if (messages.getById(msgId) == null) {
+            messages.upsert(
+                MessageEntity(
+                    id = msgId,
+                    conversationId = conversationId,
+                    senderDeviceId = header.from,
+                    outgoing = false,
+                    type = if (meta.voice) MessageType.VOICE else MessageType.FILE,
+                    body = meta.name,
+                    timestamp = header.createdAt,
+                    status = MessageStatus.RECEIVED,
+                    filePath = stored.file.absolutePath,
+                    fileName = meta.name,
+                    fileSize = stored.size,
+                    packetId = header.packetId
+                )
+            )
+            conversations.updateLastMessage(conversationId, header.createdAt, meta.name, 1)
+        }
+        transfers.updateProgress(meta.fileId, meta.total, "COMPLETE")
+    }
+
+    private suspend fun conversationFor(header: PacketHeader): String {
+        val groupId = header.groupId
+        if (groupId != null) {
+            val existing = conversations.getById(groupId)
+            if (existing == null) {
+                conversations.upsert(
+                    ConversationEntity(
+                        id = groupId,
+                        title = header.groupName?.takeIf { it.isNotBlank() } ?: "Group",
+                        isGroup = true,
+                        memberIds = "",
+                        createdAt = header.createdAt,
+                        lastMessageAt = header.createdAt
+                    )
+                )
+            }
+            return groupId
+        }
+        val peer = header.from
+        return ensureDirectConversation(peer, contacts.displayName(peer))
+    }
+
+    private suspend fun sendAck(header: PacketHeader) {
+        val me = mesh.deviceId()
+        if (header.from.isBlank() || header.from == me) return
+        val now = System.currentTimeMillis()
+        val ack = PacketHeader(
+            packetId = UUID.randomUUID().toString(),
+            type = PacketType.ACK,
+            from = me,
+            to = header.from,
+            msgId = "",
+            createdAt = now,
+            expiresAt = RoutingPolicy.expiryFrom(now),
+            ttl = RoutingPolicy.DEFAULT_TTL,
+            ackFor = header.msgId.ifBlank { header.packetId }
+        )
+        handOff(ack, ByteArray(0))
+    }
+
+    override suspend fun onAck(header: PacketHeader) {
+        val ackFor = header.ackFor ?: return
+        messages.updateStatus(ackFor, MessageStatus.DELIVERED)
+        relays.deleteForMessage(ackFor)
+    }
+
+    override suspend fun onRelay(header: PacketHeader, body: ByteArray) {
+        if (header.expiresAt <= System.currentTimeMillis()) return
+        if (relays.count() >= MAX_RELAY_ENTRIES) return
+        relays.insertIfAbsent(
+            RelayEntity(
+                packetId = header.packetId,
+                headerJson = json.encodeToString(PacketHeader.serializer(), header),
+                bodyBase64 = Base64.encodeToString(body, Base64.NO_WRAP),
+                msgId = header.msgId,
+                targetDeviceId = header.to,
+                createdAt = header.createdAt,
+                expiresAt = header.expiresAt
+            )
+        )
+    }
+
+    override suspend fun onPeerReady(peer: PeerInfo) {
+        contacts.rememberPeer(peer.deviceId, peer.displayName)
+        ensureDirectConversation(peer.deviceId, contacts.displayName(peer.deviceId))
+        flushQueue(peer.deviceId)
+        retryPending()
+    }
+
+    override suspend fun onPeerGone(deviceId: String) {
+        Log.i(TAG, "Peer left: $deviceId")
+    }
+
+    // --------------------------------------------------------------- store & forward
+
+    private suspend fun flushQueue(deviceId: String) {
+        val entries = relays.forDevice(deviceId)
+        for (entry in entries.take(MAX_FLUSH_PER_RUN)) {
+            val header = try {
+                json.decodeFromString(PacketHeader.serializer(), entry.headerJson)
+            } catch (e: Exception) {
+                relays.delete(entry.packetId)
+                continue
+            }
+            if (header.expiresAt <= System.currentTimeMillis()) {
+                relays.delete(entry.packetId)
+                continue
+            }
+            val body = Base64.decode(entry.bodyBase64, Base64.NO_WRAP)
+            val sent = if (header.to != null) {
+                mesh.sendTo(header.to, header, body)
+            } else {
+                mesh.broadcast(header, body) > 0
+            }
+            if (sent && header.to != null) relays.delete(entry.packetId)
+        }
+    }
+
+    /** Called on peer connect, on the periodic worker and when the app comes back to foreground. */
+    suspend fun retryPending() {
+        relays.purgeExpired(System.currentTimeMillis())
+        for (entry in relays.getAll().take(MAX_FLUSH_PER_RUN)) {
+            if (entry.expiresAt <= System.currentTimeMillis()) {
+                relays.delete(entry.packetId)
+                continue
+            }
+            val header = try {
+                json.decodeFromString(PacketHeader.serializer(), entry.headerJson)
+            } catch (e: Exception) {
+                relays.delete(entry.packetId)
+                continue
+            }
+            val body = Base64.decode(entry.bodyBase64, Base64.NO_WRAP)
+            val sent = if (header.to != null) {
+                mesh.sendTo(header.to, header, body)
+            } else if (mesh.connectedDeviceIds().isNotEmpty()) {
+                mesh.broadcast(header, body) > 0
+            } else {
+                false
+            }
+            if (sent && header.to != null) relays.delete(entry.packetId)
+        }
+
+        for (message in messages.pendingOutgoing()) {
+            if (message.status != MessageStatus.QUEUED) continue
+            val conversation = conversations.getById(message.conversationId) ?: continue
+            dispatchText(message, conversation, replaceQueued = true)
+        }
+    }
+
+    private fun previewOf(text: String): String =
+        text.replace('\n', ' ').take(120)
+
+    private companion object {
+        const val TAG = "ChatRepository"
+        const val MAX_RELAY_ENTRIES = 600
+        const val MAX_FLUSH_PER_RUN = 200
     }
 }

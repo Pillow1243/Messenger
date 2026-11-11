@@ -1,8 +1,8 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.offlinemesh.messenger.presentation.screens
 
-import android.content.Intent
-import android.net.Uri
-import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,60 +13,58 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material.icons.filled.BatteryStd
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.os.LocaleListCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.offlinemesh.messenger.BuildConfig
 import com.offlinemesh.messenger.R
-import com.offlinemesh.messenger.presentation.viewmodel.SettingsViewModel
-import com.offlinemesh.messenger.presentation.viewmodel.UpdateUiState
+import com.offlinemesh.messenger.presentation.AppViewModel
+import com.offlinemesh.messenger.presentation.chunkKey
+import com.offlinemesh.messenger.presentation.components.ActionRow
+import com.offlinemesh.messenger.presentation.components.InfoRow
+import com.offlinemesh.messenger.presentation.components.SectionCard
+import com.offlinemesh.messenger.presentation.components.ToggleRow
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
-    val vm: SettingsViewModel = viewModel()
-    val context = LocalContext.current
-    val displayName by vm.displayName.collectAsState(initial = "")
-    val language by vm.language.collectAsState(initial = "en")
-    val theme by vm.theme.collectAsState(initial = "system")
-    val ble by vm.bleEnabled.collectAsState(initial = true)
-    val wifi by vm.wifiEnabled.collectAsState(initial = true)
-    val batteryMode by vm.batteryMode.collectAsState(initial = "balanced")
-    val updateState by vm.updateState.collectAsState()
-    val fingerprint by vm.fingerprint.collectAsState()
-    var nameDraft by remember(displayName) { mutableStateOf(displayName) }
+fun SettingsScreen(vm: AppViewModel) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val pairingCode by vm.pairingCode.collectAsStateWithLifecycle()
+    var editName by remember { mutableStateOf(false) }
+    var confirmErase by remember { mutableStateOf(false) }
+
+    val current = settings
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.settings)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = null)
-                    }
+                title = {
+                    Text(
+                        text = stringResource(R.string.settings_title),
+                        style = MaterialTheme.typography.headlineMedium
+                    )
                 }
             )
         }
@@ -76,203 +74,205 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+                .padding(bottom = 96.dp)
         ) {
-            SectionTitle(stringResource(R.string.profile))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    OutlinedTextField(
-                        value = nameDraft,
-                        onValueChange = { nameDraft = it },
-                        label = { Text(stringResource(R.string.display_name_label)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+            SectionCard(title = stringResource(R.string.section_profile)) {
+                ActionRow(
+                    icon = Icons.Filled.Person,
+                    title = current?.displayName?.ifBlank { stringResource(R.string.display_name) }
+                        ?: stringResource(R.string.display_name),
+                    subtitle = stringResource(R.string.display_name),
+                    onClick = { editName = true }
+                )
+                InfoRow(
+                    label = stringResource(R.string.my_identity),
+                    value = chunkKey(current?.deviceId.orEmpty(), groupSize = 8, maxGroups = 3),
+                    mono = true
+                )
+            }
+
+            SectionCard(title = stringResource(R.string.section_connectors)) {
+                ToggleRow(
+                    icon = Icons.Filled.Settings,
+                    title = stringResource(R.string.connectors_mesh),
+                    subtitle = stringResource(R.string.connectors_mesh_hint),
+                    checked = current?.meshEnabled ?: false,
+                    onCheckedChange = { vm.setMeshEnabled(it) }
+                )
+                ToggleRow(
+                    icon = Icons.Filled.Bluetooth,
+                    title = stringResource(R.string.connectors_bluetooth),
+                    subtitle = stringResource(R.string.connectors_bluetooth_hint),
+                    checked = current?.bluetoothEnabled ?: false,
+                    onCheckedChange = { vm.setBluetoothEnabled(it) }
+                )
+                ToggleRow(
+                    icon = Icons.Filled.Wifi,
+                    title = stringResource(R.string.connectors_wifi),
+                    subtitle = stringResource(R.string.connectors_wifi_hint),
+                    checked = current?.wifiEnabled ?: false,
+                    onCheckedChange = { vm.setWifiEnabled(it) }
+                )
+                ToggleRow(
+                    icon = Icons.Filled.BatteryStd,
+                    title = stringResource(R.string.connectors_battery),
+                    subtitle = stringResource(R.string.connectors_battery_hint),
+                    checked = current?.batterySaver ?: false,
+                    onCheckedChange = { vm.setBatterySaver(it) }
+                )
+                Text(
+                    text = stringResource(R.string.connectors_radios_note),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+            }
+
+            SectionCard(title = stringResource(R.string.section_appearance)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = current?.theme == "system",
+                        onClick = { vm.setTheme("system") },
+                        label = { Text(stringResource(R.string.theme_system)) }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(onClick = { vm.setDisplayName(nameDraft) }) {
-                        Text(stringResource(R.string.save))
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            SectionTitle(stringResource(R.string.mesh_radios))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    ToggleRow(
-                        title = stringResource(R.string.ble_toggle),
-                        subtitle = stringResource(R.string.ble_subtitle),
-                        checked = ble,
-                        onCheckedChange = vm::setBle
+                    FilterChip(
+                        selected = current?.theme == "light",
+                        onClick = { vm.setTheme("light") },
+                        label = { Text(stringResource(R.string.theme_light)) }
                     )
-                    ToggleRow(
-                        title = stringResource(R.string.wifi_direct_toggle),
-                        subtitle = stringResource(R.string.wifi_direct_subtitle),
-                        checked = wifi,
-                        onCheckedChange = vm::setWifi
+                    FilterChip(
+                        selected = current?.theme == "dark",
+                        onClick = { vm.setTheme("dark") },
+                        label = { Text(stringResource(R.string.theme_dark)) }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.battery_mode), style = MaterialTheme.typography.titleSmall)
-                    Text(stringResource(R.string.battery_subtitle), style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row {
-                        ModeButton(
-                            label = stringResource(R.string.battery_performance),
-                            selected = batteryMode == "performance",
-                            onClick = { vm.setBatteryMode("performance") }
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                        ModeButton(
-                            label = stringResource(R.string.battery_balanced),
-                            selected = batteryMode == "balanced",
-                            onClick = { vm.setBatteryMode("balanced") }
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                        ModeButton(
-                            label = stringResource(R.string.battery_saver),
-                            selected = batteryMode == "saver",
-                            onClick = { vm.setBatteryMode("saver") }
-                        )
-                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = current?.language == "en",
+                        onClick = { vm.setLanguage("en") },
+                        label = { Text(stringResource(R.string.language_english)) }
+                    )
+                    FilterChip(
+                        selected = current?.language == "fa",
+                        onClick = { vm.setLanguage("fa") },
+                        label = { Text(stringResource(R.string.language_persian)) }
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            SectionTitle(stringResource(R.string.appearance))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.theme), style = MaterialTheme.typography.titleSmall)
-                    Row {
-                        ModeButton(
-                            label = stringResource(R.string.theme_system),
-                            selected = theme == "system",
-                            onClick = { vm.setTheme("system") }
+            SectionCard(title = stringResource(R.string.section_security)) {
+                Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    androidx.compose.material3.Icon(
+                        Icons.Filled.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.height(20.dp)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Column(modifier = Modifier.padding(start = 12.dp)) {
+                        Text(
+                            text = stringResource(R.string.encryption_title),
+                            style = MaterialTheme.typography.titleMedium
                         )
-                        Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                        ModeButton(
-                            label = stringResource(R.string.theme_light),
-                            selected = theme == "light",
-                            onClick = { vm.setTheme("light") }
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                        ModeButton(
-                            label = stringResource(R.string.theme_dark),
-                            selected = theme == "dark",
-                            onClick = { vm.setTheme("dark") }
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(stringResource(R.string.language), style = MaterialTheme.typography.titleSmall)
-                    Row {
-                        ModeButton(
-                            label = stringResource(R.string.language_english),
-                            selected = language == "en",
-                            onClick = {
-                                vm.setLanguage("en")
-                                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
-                            }
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                        ModeButton(
-                            label = stringResource(R.string.language_persian),
-                            selected = language == "fa",
-                            onClick = {
-                                vm.setLanguage("fa")
-                                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("fa"))
-                            }
+                        Text(
+                            text = stringResource(R.string.encryption_desc),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+                InfoRow(
+                    label = stringResource(R.string.database_title),
+                    value = stringResource(R.string.database_desc)
+                )
+                Text(
+                    text = stringResource(R.string.offline_notice),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            SectionTitle(stringResource(R.string.security))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.encryption_status), style = MaterialTheme.typography.titleSmall)
-                    Text(stringResource(R.string.encryption_on), style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.database_status), style = MaterialTheme.typography.titleSmall)
-                    Text(stringResource(R.string.database_encrypted), style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.fingerprint), style = MaterialTheme.typography.titleSmall)
-                    Text(fingerprint, style = MaterialTheme.typography.bodySmall)
-                }
+            SectionCard(title = stringResource(R.string.section_about)) {
+                InfoRow(
+                    label = stringResource(R.string.version_title),
+                    value = stringResource(
+                        R.string.version_value,
+                        BuildConfig.VERSION_NAME,
+                        BuildConfig.BUILD_CHANNEL
+                    )
+                )
+                Text(
+                    text = stringResource(R.string.about_text),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+                ActionRow(
+                    icon = Icons.Filled.Delete,
+                    title = stringResource(R.string.clear_all_data),
+                    danger = true,
+                    onClick = { confirmErase = true }
+                )
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            SectionTitle(stringResource(R.string.updates))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Button(onClick = { vm.checkUpdates() }) {
-                        Text(stringResource(R.string.check_updates))
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    when (val state = updateState) {
-                        is UpdateUiState.Idle -> {
-                        }
-                        is UpdateUiState.Checking -> Text(stringResource(R.string.checking))
-                        is UpdateUiState.UpToDate -> Text(stringResource(R.string.up_to_date))
-                        is UpdateUiState.Offline -> Text(stringResource(R.string.update_offline))
-                        is UpdateUiState.Available -> {
-                            Text("${stringResource(R.string.update_available)}: ${state.release.tagName}")
-                            Spacer(modifier = Modifier.height(8.dp))
-                            state.release.apkUrl?.let { url ->
-                                Button(onClick = {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                }) {
-                                    Text(stringResource(R.string.download_update))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            SectionTitle(stringResource(R.string.about))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("${stringResource(R.string.version)} ${BuildConfig.VERSION_NAME}")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodySmall)
-                }
-            }
+            Spacer(Modifier.height(24.dp))
         }
     }
-}
 
-@Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium)
-    Spacer(modifier = Modifier.height(8.dp))
-}
-
-@Composable
-private fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-@Composable
-private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Text(
-            text = label,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    if (editName) {
+        var name by remember { mutableStateOf(current?.displayName.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { editName = false },
+            title = { Text(stringResource(R.string.display_name)) },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { if (it.length <= 40) name = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.display_name)) }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.setDisplayName(name.trim())
+                    editName = false
+                }) { Text(stringResource(R.string.save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { editName = false }) { Text(stringResource(R.string.cancel)) }
+            }
         )
+    }
+
+    if (confirmErase) {
+        AlertDialog(
+            onDismissRequest = { confirmErase = false },
+            title = { Text(stringResource(R.string.clear_all_data)) },
+            text = { Text(stringResource(R.string.clear_all_data_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmErase = false
+                    vm.eraseAllData()
+                }) { Text(stringResource(R.string.clear_all_data)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmErase = false }) { Text(stringResource(R.string.cancel)) }
+            }
+        )
+    }
+
+    // Keeps the pairing code warm so the QR dialog opens instantly.
+    if (pairingCode.isEmpty()) {
+        androidx.compose.runtime.LaunchedEffect(Unit) { vm.refreshPairingCode() }
     }
 }

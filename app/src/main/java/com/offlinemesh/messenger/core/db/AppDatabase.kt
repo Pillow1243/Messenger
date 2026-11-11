@@ -8,12 +8,13 @@ import androidx.room.RoomDatabase
         ConversationEntity::class,
         MessageEntity::class,
         ContactEntity::class,
-        OutboxEntity::class,
+        RelayEntity::class,
         SeenPacketEntity::class,
+        IdentityEntity::class,
         SessionEntity::class,
         PreKeyEntity::class,
         SignedPreKeyEntity::class,
-        IdentityEntity::class,
+        KyberPreKeyEntity::class,
         FileTransferEntity::class,
         KeyValueEntity::class
     ],
@@ -24,7 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
     abstract fun messageDao(): MessageDao
     abstract fun contactDao(): ContactDao
-    abstract fun outboxDao(): OutboxDao
+    abstract fun relayDao(): RelayDao
     abstract fun seenPacketDao(): SeenPacketDao
     abstract fun signalDao(): SignalDao
     abstract fun fileTransferDao(): FileTransferDao

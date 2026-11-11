@@ -1,116 +1,152 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Offline Mesh Messenger</string>
+    <string name="app_name">Offline Mesh</string>
 
     <!-- Onboarding -->
-    <string name="onboarding_title">Offline Mesh Messenger</string>
-    <string name="onboarding_subtitle">Chat without internet. Your messages travel device-to-device over Bluetooth and Wi-Fi Direct, encrypted end-to-end.</string>
-    <string name="display_name_label">Display name</string>
-    <string name="display_name_hint">e.g. Alex</string>
-    <string name="continue_button">Continue</string>
-    <string name="choose_language">Language</string>
+    <string name="onboarding_title">Offline Mesh</string>
+    <string name="onboarding_subtitle">Message people nearby with no internet, no SIM and no server. Messages hop device to device over Bluetooth and Wi-Fi Direct, and are end-to-end encrypted with the Signal Protocol.</string>
+    <string name="onboarding_name_label">Your display name</string>
+    <string name="onboarding_name_hint">e.g. Alex</string>
+    <string name="onboarding_language">Language</string>
+    <string name="onboarding_start">Start messaging</string>
     <string name="language_english">English</string>
     <string name="language_persian">فارسی</string>
 
     <!-- Navigation -->
-    <string name="chats">Chats</string>
-    <string name="contacts">Contacts</string>
-    <string name="discover">Discover</string>
-    <string name="settings">Settings</string>
-    <string name="search_chats">Search chats</string>
-    <string name="no_chats_yet">No chats yet</string>
-    <string name="no_chats_subtitle">Start discovery to find nearby devices, or add a contact with a QR code.</string>
-    <string name="start_discovery">Start discovery</string>
+    <string name="nav_chats">Chats</string>
+    <string name="nav_contacts">Contacts</string>
+    <string name="nav_discover">Nearby</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Chats list -->
+    <string name="chats_title">Chats</string>
+    <string name="no_chats_title">No conversations yet</string>
+    <string name="no_chats_hint">Open “Nearby” to find devices around you, or add a contact with a code.</string>
+    <string name="new_chat">New chat</string>
     <string name="new_group">New group</string>
-    <string name="group_name_hint">Group name</string>
+    <string name="group_name_label">Group name</string>
+    <string name="group_members">Members</string>
     <string name="create">Create</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="delete_chat">Delete conversation</string>
+    <string name="delete_chat_confirm">Delete this conversation and all of its messages on this device?</string>
+    <string name="group_chat">Group chat</string>
+    <string name="members_count">%1$d members</string>
+    <string name="you">You</string>
 
-    <!-- Chat -->
-    <string name="type_message">Type a message…</string>
+    <!-- Chat screen -->
+    <string name="message_hint">Message</string>
     <string name="send">Send</string>
     <string name="attach_file">Attach file</string>
-    <string name="record_voice">Record voice note</string>
-    <string name="stop_recording">Stop recording</string>
-    <string name="encrypted_badge">End-to-end encrypted</string>
-    <string name="queued">Queued</string>
-    <string name="sent">Sent</string>
-    <string name="delivered">Delivered</string>
-    <string name="read">Read</string>
-    <string name="failed">Failed</string>
+    <string name="record_voice">Voice note</string>
+    <string name="stop_recording">Stop</string>
+    <string name="encrypted_banner">Messages are end-to-end encrypted</string>
+    <string name="status_queued">Queued</string>
+    <string name="status_sending">Sending</string>
+    <string name="status_sent">Sent</string>
+    <string name="status_delivered">Delivered</string>
+    <string name="status_failed">Not delivered</string>
     <string name="retry">Retry</string>
     <string name="file_received">File received</string>
-    <string name="file_sending">Sending file…</string>
-    <string name="file_too_large">File is too large (max 50 MB)</string>
+    <string name="file_too_large">File is too large (maximum 50 MB)</string>
     <string name="voice_note">Voice note</string>
-    <string name="open_file">Open file</string>
-    <string name="members">members</string>
-    <string name="group_chat">Group chat</string>
+    <string name="open_file">Open</string>
+    <string name="empty_chat">No messages yet. Say hello!</string>
+    <string name="attachment_pick_failed">Could not read that file</string>
 
-    <!-- Discovery -->
-    <string name="mesh_status_on">Mesh network is ON</string>
-    <string name="mesh_status_off">Mesh network is OFF</string>
-    <string name="peers_connected">peers connected</string>
+    <!-- Nearby / discover -->
+    <string name="discover_title">Nearby</string>
+    <string name="mesh_on">Mesh is active</string>
+    <string name="mesh_off">Mesh is off</string>
+    <string name="peers_connected">%1$d connected</string>
     <string name="nearby_devices">Nearby devices</string>
     <string name="scanning">Scanning…</string>
-    <string name="no_devices_found">No devices found yet. Keep this screen open and ask others to open discovery too.</string>
+    <string name="no_devices">No devices yet. Keep this screen open — discovery repeats automatically.</string>
     <string name="connect">Connect</string>
     <string name="connected">Connected</string>
     <string name="disconnect">Disconnect</string>
-    <string name="online">Online</string>
-    <string name="offline">Offline</string>
-    <string name="scan_qr">Scan QR code</string>
-    <string name="show_my_qr">Show my QR code</string>
+    <string name="my_code">My code</string>
+    <string name="show_my_code">Share my contact code</string>
+    <string name="my_code_title">My contact code</string>
+    <string name="my_code_subtitle">Others can scan this to add you and verify your identity key. It contains only public data.</string>
+    <string name="scan_code">Scan code</string>
     <string name="add_contact">Add contact</string>
     <string name="contact_added">Contact added</string>
-    <string name="invalid_qr">Invalid QR code</string>
-    <string name="my_qr_title">My identity QR code</string>
-    <string name="my_qr_subtitle">Share this code so others can add you. It contains only your public identity key.</string>
+    <string name="invalid_code">That code is not a valid contact code</string>
+    <string name="copy_code">Copy code</string>
+    <string name="code_copied">Code copied</string>
+    <string name="paste_code_title">Paste a contact code</string>
+    <string name="paste_code_hint">Paste the text code you received</string>
+    <string name="pair_code_imported">Contact verified and added</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">Contacts</string>
+    <string name="no_contacts">No contacts yet</string>
+    <string name="no_contacts_hint">Add someone by scanning their code, or by connecting to them in Nearby.</string>
+    <string name="contact_key">Identity key</string>
+    <string name="safety_number">Safety number</string>
+    <string name="safety_number_hint">Compare these digits with your contact in person. If they match, nobody is intercepting your chat.</string>
+    <string name="verified">Verified</string>
+    <string name="not_verified">Not verified</string>
+    <string name="mark_verified">Mark as verified</string>
+    <string name="reset_identity">Reset trust</string>
+    <string name="reset_identity_confirm">Forget the identity key for this contact? The next message will establish a new session.</string>
+    <string name="identity_changed_warning">This contact’s security code changed. Verify it in person before trusting new messages.</string>
 
     <!-- Settings -->
-    <string name="profile">Profile</string>
-    <string name="mesh_radios">Mesh radios</string>
-    <string name="appearance">Appearance</string>
-    <string name="security">Security</string>
-    <string name="updates">Updates</string>
-    <string name="about">About</string>
-    <string name="ble_toggle">Bluetooth Low Energy</string>
-    <string name="ble_subtitle">Use BLE for discovery and short-range links</string>
-    <string name="wifi_direct_toggle">Wi-Fi Direct</string>
-    <string name="wifi_direct_subtitle">Use Wi-Fi Direct for high-throughput links</string>
-    <string name="battery_mode">Battery mode</string>
-    <string name="battery_subtitle">Controls how often radios advertise and discover</string>
-    <string name="battery_performance">Performance</string>
-    <string name="battery_balanced">Balanced</string>
-    <string name="battery_saver">Saver</string>
+    <string name="settings_title">Settings</string>
+    <string name="section_profile">Profile</string>
+    <string name="section_connectors">Connectors</string>
+    <string name="section_appearance">Appearance</string>
+    <string name="section_security">Security</string>
+    <string name="section_about">About</string>
+    <string name="display_name">Display name</string>
+    <string name="connectors_mesh">Mesh network</string>
+    <string name="connectors_mesh_hint">Advertise and discover peers while the app is open</string>
+    <string name="connectors_bluetooth">Bluetooth</string>
+    <string name="connectors_bluetooth_hint">Bluetooth LE discovery and links (managed by the system)</string>
+    <string name="connectors_wifi">Wi-Fi Direct</string>
+    <string name="connectors_wifi_hint">High-bandwidth links between nearby devices</string>
+    <string name="connectors_battery">Battery saver</string>
+    <string name="connectors_battery_hint">Slower discovery and fewer wake-ups</string>
+    <string name="connectors_radios_note">Android’s Nearby API decides which radio carries each link; these switches show the radios in use and let you trade speed for battery.</string>
+    <string name="foreground_service">Keep running in background</string>
+    <string name="foreground_service_hint">Show a permanent notification so the mesh keeps working when the app is closed</string>
     <string name="theme">Theme</string>
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="language">Language</string>
-    <string name="identity_key">Identity key</string>
-    <string name="fingerprint">Safety fingerprint</string>
-    <string name="encryption_status">Encryption</string>
-    <string name="encryption_on">Signal Protocol (X3DH + Double Ratchet) with AES-256-GCM fallback</string>
-    <string name="database_status">Local database</string>
-    <string name="database_encrypted">Encrypted with SQLCipher (AES-256). Key stored in Android Keystore.</string>
-    <string name="check_updates">Check for updates</string>
-    <string name="checking">Checking…</string>
-    <string name="up_to_date">You are up to date</string>
-    <string name="update_available">Update available</string>
-    <string name="download_update">Download</string>
-    <string name="update_offline">Could not check (offline)</string>
-    <string name="version">Version</string>
-    <string name="about_text">Offline Mesh Messenger is a fully offline peer-to-peer messaging app. No message data ever leaves your device except over local radios to nearby peers.</string>
-    <string name="clear_all_data">Clear all data</string>
-    <string name="clear_all_data_confirm">This will delete all chats, contacts and keys on this device. Continue?</string>
+    <string name="encryption_title">Encryption</string>
+    <string name="encryption_desc">Signal Protocol — X3DH/PQXDH key agreement with the Double Ratchet. Every message gets a fresh key.</string>
+    <string name="database_title">Local storage</string>
+    <string name="database_desc">SQLCipher (AES-256). The database key is wrapped by a key that never leaves the Android Keystore.</string>
+    <string name="my_identity">My identity key</string>
+    <string name="version_title">Version</string>
+    <string name="version_value">%1$s (%2$s)</string>
+    <string name="offline_notice">This app has no internet permission. Nothing you write can leave your device except over local radios.</string>
+    <string name="about_text">Offline Mesh is a peer-to-peer messenger for places without connectivity: disasters, protests, remote sites and flights. Messages are stored encrypted on your device and forwarded across the mesh until they reach the recipient.</string>
+    <string name="clear_all_data">Erase all data</string>
+    <string name="clear_all_data_confirm">This deletes every chat, contact and key on this device. It cannot be undone.</string>
 
     <!-- Permissions -->
-    <string name="permissions_title">Permissions needed</string>
-    <string name="permissions_message">Mesh messaging needs Bluetooth, location (for Bluetooth scanning on older Android), nearby devices, microphone for voice notes, and camera for QR scanning.</string>
+    <string name="permissions_title">Permissions</string>
+    <string name="permissions_hint">Nearby needs location permission on Android 11 and older to scan for Bluetooth devices, plus camera for QR codes and microphone for voice notes.</string>
     <string name="grant_permissions">Grant permissions</string>
+    <string name="permissions_missing">Some permissions are missing — discovery may not work.</string>
 
-    <string name="mesh_notification_channel">Mesh network</string>
-    <string name="mesh_notification_text">Mesh network active</string>
+    <!-- Service -->
+    <string name="mesh_notification_channel">Mesh service</string>
+    <string name="mesh_notification_title">Mesh active</string>
+    <string name="mesh_notification_text">Looking for nearby peers</string>
+
+    <!-- Errors -->
+    <string name="error_bluetooth_off">Bluetooth is turned off. Enable it to use the mesh.</string>
+    <string name="error_no_session">Waiting for the contact to come into range to exchange keys.</string>
+    <string name="error_decrypt">Could not decrypt this message</string>
+    <string name="error_unknown">Something went wrong</string>
+    <string name="error_location_off">Turn on location services so Android can scan for nearby devices.</string>
+    <string name="error_play_services">Google Play services is required for nearby connections and is missing on this device.</string>
 </resources>

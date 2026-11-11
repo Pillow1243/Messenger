@@ -1,32 +1,78 @@
-name: Android build
+name: Android CI
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Build, test and package
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Build and test
-        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleRelease
-      - name: Upload APKs
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
+
+      - name: Assemble debug + release
+        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
+
+      - name: Collect APKs
+        run: |
+          mkdir -p artifacts
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/offlinemesh-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk artifacts/offlinemesh-demo-signed.apk
+          ls -lh artifacts
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-apks
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          name: offlinemesh-apks
+          path: artifacts/*.apk
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish demo-signed APKs as a GitHub release
+        if: github.event_name == 'push' && github.event.repository.private == false
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: demo-latest
+          name: Offline Mesh - demo build
+          prerelease: true
+          make_latest: "false"
+          body: |
+            Automatically built from `${{ github.sha }}` on `${{ github.ref_name }}`.
+
+            **These APKs are signed with the public Android debug key.** Anyone can sign a
+            package with that key, so treat the files as convenient demo builds, not as a
+            trusted distribution channel. Install: allow "install unknown apps" for your
+            browser/file manager, then open `offlinemesh-demo-signed.apk`.
+
+            Minimum Android version: 8.0 (API 26).
+          files: |
+            artifacts/offlinemesh-debug.apk
+            artifacts/offlinemesh-demo-signed.apk
