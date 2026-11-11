@@ -8,6 +8,7 @@ import com.offlinemesh.messenger.core.crypto.DuplicateCiphertextException
 import com.offlinemesh.messenger.core.crypto.IdentityChangedException
 import com.offlinemesh.messenger.core.crypto.NoSessionYetException
 import com.offlinemesh.messenger.core.db.AppDatabase
+import com.offlinemesh.messenger.core.db.ContactEntity
 import com.offlinemesh.messenger.core.db.ConversationEntity
 import com.offlinemesh.messenger.core.db.FileTransferEntity
 import com.offlinemesh.messenger.core.db.MessageEntity

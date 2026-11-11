@@ -35,19 +35,19 @@ data class PreKeyBundleJson(
 ) {
     fun toPreKeyBundle(): PreKeyBundle {
         val preKeyId = oneTimePreKey?.id ?: PreKeyBundle.NULL_PRE_KEY_ID
-        val preKeyPublic = oneTimePreKey?.let { ECPublicKey(decode(it.public)) }
+        val preKeyPublic = oneTimePreKey?.let { ECPublicKey(unbase64(it.public)) }
         return PreKeyBundle(
             registrationId,
             CryptoKeys.DEVICE_ID,
             preKeyId,
             preKeyPublic,
             signedPreKey.id,
-            ECPublicKey(decode(signedPreKey.public)),
-            decode(signedPreKey.signature ?: ""),
-            IdentityKey(decode(identityKey)),
+            ECPublicKey(unbase64(signedPreKey.public)),
+            unbase64(signedPreKey.signature ?: ""),
+            IdentityKey(unbase64(identityKey)),
             kyberPreKey.id,
-            KEMPublicKey(decode(kyberPreKey.public)),
-            decode(kyberPreKey.signature ?: "")
+            KEMPublicKey(unbase64(kyberPreKey.public)),
+            unbase64(kyberPreKey.signature ?: "")
         )
     }
 
@@ -62,27 +62,27 @@ data class PreKeyBundleJson(
         /** Builds the JSON form from an in-memory libsignal bundle (used before upload). */
         fun fromBundle(bundle: PreKeyBundle, includeOneTimePreKey: Boolean = true): PreKeyBundleJson =
             PreKeyBundleJson(
-                identityKey = encode(bundle.identityKey.serialize()),
+                identityKey = base64(bundle.identityKey.serialize()),
                 registrationId = bundle.registrationId,
                 signedPreKey = BundleKey(
                     id = bundle.signedPreKeyId,
-                    public = encode(bundle.signedPreKey.serialize()),
-                    signature = encode(bundle.signedPreKeySignature)
+                    public = base64(bundle.signedPreKey.serialize()),
+                    signature = base64(bundle.signedPreKeySignature)
                 ),
                 kyberPreKey = BundleKey(
                     id = bundle.kyberPreKeyId,
-                    public = encode(bundle.kyberPreKey.serialize()),
-                    signature = encode(bundle.kyberPreKeySignature)
+                    public = base64(bundle.kyberPreKey.serialize()),
+                    signature = base64(bundle.kyberPreKeySignature)
                 ),
                 oneTimePreKey = if (includeOneTimePreKey) {
-                    bundle.preKey?.let { BundleKey(bundle.preKeyId, encode(it.serialize())) }
+                    bundle.preKey?.let { BundleKey(bundle.preKeyId, base64(it.serialize())) }
                 } else {
                     null
                 }
             )
 
-        private fun encode(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        private fun base64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 }
 
-private fun decode(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
+private fun unbase64(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
