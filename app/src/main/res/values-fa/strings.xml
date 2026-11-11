@@ -40,7 +40,9 @@
     <string name="status_delivered">تحویل شد</string>
     <string name="status_failed">تحویل نشد</string>
     <string name="file_received">فایل دریافت شد</string>
-    <string name="file_too_large">فایل بیش از حد بزرگ است (حداکثر ۵۰ مگابایت)</string>
+    <string name="file_too_large">فایل بیش از حد بزرگ است (حداکثر ۱۲۸ مگابایت آنلاین، ۵۰ مگابایت در مش)</string>
+    <string name="insufficient_storage">فضای خالی کافی روی این دستگاه وجود ندارد</string>
+    <string name="integrity_failed">تأیید یکپارچگی رمزنگاری پیوست ناموفق بود</string>
     <string name="voice_note">پیام صوتی</string>
     <string name="empty_chat">هنوز پیامی نیست. سلام کنید!</string>
     <string name="attachment_pick_failed">خواندن این فایل ممکن نشد</string>
@@ -176,7 +178,20 @@
 
     <!-- Notifications -->
     <string name="notifications_messages">پیام‌ها</string>
-    <string name="notifications_messages_desc">پیام‌های تازه‌ای که وقتی برنامه در پس‌زمینه بود رسیده‌اند. هیچ چیزی از طریق سرور فرستاده نمی‌شود.</string>
+    <string name="notifications_messages_desc">پیام‌های رمزنگاری‌شدهٔ سرتاسری که روی همین دستگاه رمزگشایی شده‌اند.</string>
+    <string name="notifications_direct">پیام‌های خصوصی</string>
+    <string name="notifications_groups">پیام‌های گروهی</string>
+    <string name="notifications_channels">نوشته‌های کانال</string>
+    <string name="notifications_calls">تماس‌ها</string>
+    <string name="notifications_calls_desc">تماس‌های صوتی و تصویری ورودی یک‌به‌یک</string>
+    <string name="section_notifications">اعلان‌ها</string>
+    <string name="notifications_enable">فعال‌سازی اعلان‌ها</string>
+    <string name="notifications_enable_hint">هنگام دریافت پیام یا تماس هشدار داده شود</string>
+    <string name="push_status_label">بیدارباش راه‌دور (FCM)</string>
+    <string name="push_status_registered">فعال و ثبت‌شده (بدون هیچ متن آشکاری در اعلان سرور)</string>
+    <string name="push_status_unconfigured">در این نسخه پیکربندی نشده — هنگام باز بودن برنامه Realtime فعال است</string>
+    <string name="push_status_initialized">آماده‌سازی شد — در انتظار ثبت توکن</string>
+    <string name="push_status_error">ثبت اعلان در دسترس نیست</string>
 
     <!-- Chat extras -->
     <string name="chat_typing">در حال نوشتن…</string>
@@ -186,8 +201,71 @@
     <string name="chat_reply">پاسخ</string>
     <string name="chat_star">ستاره</string>
     <string name="chat_saved">پیام‌های ذخیره‌شده</string>
+    <string name="chat_mute">بی‌صدا کردن اعلان‌ها</string>
+    <string name="chat_unmute">صدادار کردن اعلان‌ها</string>
+    <string name="chat_pin">سنجاق کردن گفتگو</string>
+    <string name="chat_unpin">برداشتن سنجاق</string>
+    <string name="status_read">خوانده شد</string>
+    <string name="media_photo">تصویر</string>
+    <string name="media_video">ویدیو</string>
+    <string name="media_audio">صوت</string>
+    <string name="media_document">سند</string>
+    <string name="media_uploading">در حال رمزنگاری و بارگذاری…</string>
+    <string name="media_downloading">در حال دریافت و راستی‌آزمایی…</string>
+    <string name="media_paused">متوقف موقت</string>
+    <string name="media_cancelled">لغو شد</string>
+    <string name="media_download">دریافت</string>
+    <string name="media_retry">تلاش دوباره</string>
+    <string name="media_cancel">لغو انتقال</string>
+    <string name="media_play">پخش</string>
+    <string name="media_pause">مکث</string>
+
+    <!-- Group Sender Keys & membership -->
+    <string name="group_info">امنیت و اعضای گروه</string>
+    <string name="group_sender_keys_v2">کلیدهای فرستنده سیگنال (نسخهٔ ۲) · دورهٔ #%1$d</string>
+    <string name="group_pairwise_v1">پاکت‌های نظیربه‌نظیر سیگنال (نسخهٔ ۱)</string>
+    <string name="group_upgrade_v2">ارتقا به کلیدهای فرستنده سیگنال (نسخهٔ ۲)</string>
+    <string name="group_add_member_hint">جستجوی نام کاربری برای افزودن</string>
+    <string name="group_remove_member">حذف عضو</string>
+
+    <!-- 1:1 WebRTC Calling -->
+    <string name="call_voice">تماس صوتی</string>
+    <string name="call_video">تماس تصویری</string>
+    <string name="call_incoming_audio">تماس صوتی ورودی</string>
+    <string name="call_incoming_video">تماس تصویری ورودی</string>
+    <string name="call_ongoing_audio">تماس صوتی در جریان</string>
+    <string name="call_ongoing_video">تماس تصویری در جریان</string>
+    <string name="call_ringing">در حال زنگ خوردن…</string>
+    <string name="call_connecting">در حال برقراری اتصال…</string>
+    <string name="call_reconnecting">در حال اتصال مجدد…</string>
+    <string name="call_ended">تماس پایان یافت</string>
+    <string name="call_accept">پذیرش</string>
+    <string name="call_decline">رد تماس</string>
+    <string name="call_end">پایان</string>
+    <string name="call_mute_mic">بی‌صدا</string>
+    <string name="call_unmute_mic">وصل صدا</string>
+    <string name="call_speaker">بلندگو</string>
+    <string name="call_camera_toggle">دوربین</string>
+    <string name="call_flip_camera">چرخش دوربین</string>
+    <string name="call_stun_only_notice">حالت مستقیم / STUN (سرور رله TURN تنظیم نشده است)</string>
+
+    <!-- Multi-device, blocks & safety -->
+    <string name="device_this_device">همین دستگاه</string>
+    <string name="device_revoked_badge">لغوشده</string>
+    <string name="device_active_count">%1$d از ۵ دستگاه فعال</string>
+    <string name="device_limit_error">سقف ۵ دستگاه فعال پر شده است. از یکی از دستگاه‌های قبلی وارد شوید و دستگاه قدیمی را لغو کنید.</string>
+    <string name="device_revoked_error">دسترسی این دستگاه از حساب شما لغو شده است.</string>
+    <string name="device_revoke_action">لغو دسترسی</string>
+    <string name="device_revoke_confirm">دسترسی این دستگاه لغو شود؟ پیش‌کلیدها، توکن اعلان و کلیدهای گروهی بلافاصله چرخش داده می‌شوند.</string>
+    <string name="rotate_prekeys">چرخش پیش‌کلیدها همین حالا</string>
+    <string name="block_user">مسدود کردن کاربر</string>
+    <string name="unblock_user">رفع مسدودیت کاربر</string>
+    <string name="peer_devices_title">دستگاه‌های متصل مخاطب</string>
+
     <string name="action_create">ساخت</string>
     <string name="action_cancel">انصراف</string>
     <string name="action_delete">حذف</string>
     <string name="action_save">ذخیره</string>
+    <string name="delete_conversation">حذف گفتگو</string>
+    <string name="delete_conversation_confirm">این گفتگو و پیام‌های آن از این دستگاه حذف شوند؟</string>
 </resources>

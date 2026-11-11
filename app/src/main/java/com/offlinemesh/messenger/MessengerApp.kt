@@ -2,6 +2,7 @@ package com.offlinemesh.messenger
 
 import android.app.Application
 import android.util.Log
+import com.offlinemesh.messenger.call.WebRtcCallManager
 import com.offlinemesh.messenger.core.crypto.CryptoManager
 import com.offlinemesh.messenger.core.crypto.SignalStore
 import com.offlinemesh.messenger.core.db.AppDatabase
@@ -14,6 +15,7 @@ import com.offlinemesh.messenger.data.FileRepository
 import com.offlinemesh.messenger.data.OnlineSync
 import com.offlinemesh.messenger.data.SettingsRepository
 import com.offlinemesh.messenger.service.MeshService
+import com.offlinemesh.messenger.service.MessageNotifier
 import com.offlinemesh.messenger.work.SyncWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,29 +43,37 @@ class MessengerApp : Application() {
         private set
     lateinit var online: OnlineSync
         private set
+    lateinit var calls: WebRtcCallManager
+        private set
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
+        MessageNotifier.ensureChannels(this)
         settings = SettingsRepository(this)
         database = DatabaseFactory.get(this)
         crypto = CryptoManager(database, SignalStore(database))
         files = FileRepository(this)
         contacts = ContactRepository(database, crypto, settings)
-        mesh = MeshManager(this, settings, crypto)
+        mesh = MeshManager(this, settings, crypto, database.seenPacketDao())
         online = OnlineSync(this, database, crypto, settings)
-        chats = ChatRepository(database, crypto, mesh, files, settings, contacts, online)
+        calls = WebRtcCallManager(this, database, settings) { online }
+        online.attachCallManager(calls)
+        online.attachFiles(files)
+        chats = ChatRepository(database, crypto, mesh, files, settings, contacts, online, this)
         radios = RadioController(mesh, settings)
         mesh.setHandler(chats)
-        // Starts the connectivity watcher and, if a session is stored, the online transport.
-        // The mesh is started independently below and never depends on this.
+
+        // Starts connectivity watching and, if a session is stored, the online transport.
+        // The offline mesh runs independently and never depends on Supabase availability.
         runCatching { online.start() }.onFailure { Log.w(TAG, "Online start failed", it) }
 
         appScope.launch {
             runCatching {
                 crypto.ensureIdentity()
                 mesh.refreshIdentity()
+                chats.recoverInterruptedState()
                 val snapshot = settings.settings.first()
                 if (snapshot.onboarded) {
                     if (snapshot.meshEnabled && snapshot.radiosUsable) startMesh() else stopMesh()
@@ -77,7 +87,6 @@ class MessengerApp : Application() {
         SyncWorker.schedule(this)
     }
 
-    /** Starts advertising/discovery and (optionally) the foreground service. */
     fun startMesh() {
         radios.start()
         appScope.launch {

@@ -8,8 +8,11 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ConversationDao {
-    @Query("SELECT * FROM conversations ORDER BY lastMessageAt DESC")
+    @Query("SELECT * FROM conversations WHERE archived = 0 ORDER BY pinned DESC, lastMessageAt DESC")
     fun observeAll(): Flow<List<ConversationEntity>>
+
+    @Query("SELECT * FROM conversations WHERE id = :id")
+    fun observeById(id: String): Flow<ConversationEntity?>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun getById(id: String): ConversationEntity?
@@ -53,8 +56,8 @@ interface ConversationDao {
     @Query("UPDATE conversations SET draft = :draft WHERE id = :id")
     suspend fun saveDraft(id: String, draft: String)
 
-    @Query("UPDATE conversations SET muted = :muted WHERE id = :id")
-    suspend fun setMuted(id: String, muted: Boolean)
+    @Query("UPDATE conversations SET muted = :muted, mutedUntil = :mutedUntil WHERE id = :id")
+    suspend fun setMuted(id: String, muted: Boolean, mutedUntil: Long? = null)
 
     @Query("UPDATE conversations SET pinned = :pinned WHERE id = :id")
     suspend fun setPinned(id: String, pinned: Boolean)
@@ -62,13 +65,25 @@ interface ConversationDao {
     @Query("UPDATE conversations SET archived = :archived WHERE id = :id")
     suspend fun setArchived(id: String, archived: Boolean)
 
+    @Query(
+        "UPDATE conversations SET encryptionVersion = :version, senderKeyEpoch = :epoch, " +
+            "distributionId = :distributionId, myRole = :myRole WHERE id = :id"
+    )
+    suspend fun updateEncryptionState(
+        id: String,
+        version: Int,
+        epoch: Int,
+        distributionId: String?,
+        myRole: String = "member"
+    )
+
     @Query("SELECT * FROM conversations WHERE title LIKE :pattern OR lastMessagePreview LIKE :pattern ORDER BY lastMessageAt DESC")
     suspend fun search(pattern: String): List<ConversationEntity>
 }
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC, clientMsgId ASC, id ASC")
     fun observeForConversation(conversationId: String): Flow<List<MessageEntity>>
 
     @Query("SELECT * FROM messages WHERE id = :id")
@@ -116,8 +131,40 @@ interface MessageDao {
     @Query("UPDATE messages SET body = :body, editedAt = :editedAt WHERE id = :id")
     suspend fun editBody(id: String, body: String, editedAt: Long)
 
-    @Query("UPDATE messages SET deletedAt = :at, body = '' WHERE id = :id")
+    @Query("UPDATE messages SET deletedAt = :at, body = '', filePath = NULL, mediaKeyBase64 = NULL, mediaIvBase64 = NULL, thumbnailBase64 = NULL WHERE id = :id")
     suspend fun markDeleted(id: String, at: Long)
+
+    @Query(
+        "UPDATE messages SET transferState = :state, transferBytes = :bytes, error = :error WHERE id = :id"
+    )
+    suspend fun updateTransferState(id: String, state: String?, bytes: Long, error: String? = null)
+
+    @Query(
+        "UPDATE messages SET filePath = :filePath, transferState = 'COMPLETED', " +
+            "transferBytes = COALESCE(fileSize, :bytes), error = NULL WHERE id = :id"
+    )
+    suspend fun markMediaDownloaded(id: String, filePath: String, bytes: Long)
+
+    @Query(
+        "UPDATE messages SET attachmentRemoteId = :attachmentId, remoteObjectPath = :objectPath, " +
+            "cipherSha256 = :cipherSha256, cipherSize = :cipherSize, " +
+            "mediaKeyBase64 = :keyB64, mediaIvBase64 = :ivB64, " +
+            "transferState = :transferState, transferBytes = :transferBytes WHERE id = :id"
+    )
+    suspend fun updateMediaUploadMetadata(
+        id: String,
+        attachmentId: String?,
+        objectPath: String,
+        cipherSha256: String,
+        cipherSize: Long,
+        keyB64: String,
+        ivB64: String,
+        transferState: String,
+        transferBytes: Long
+    )
+
+    @Query("SELECT * FROM messages WHERE transferState IN ('UPLOADING','DOWNLOADING','ENCRYPTING','DECRYPTING')")
+    suspend fun interruptedTransfers(): List<MessageEntity>
 
     @Query("UPDATE messages SET reactions = :summary WHERE id = :id")
     suspend fun setReactions(id: String, summary: String)
@@ -216,6 +263,9 @@ interface SeenPacketDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIfAbsent(entry: SeenPacketEntity): Long
 
+    @Query("SELECT packetId FROM seen_packets ORDER BY seenAt DESC LIMIT :limit")
+    suspend fun recentPacketIds(limit: Int = 4096): List<String>
+
     @Query("SELECT COUNT(*) FROM seen_packets WHERE packetId = :packetId")
     suspend fun countByPacketId(packetId: String): Int
 
@@ -303,6 +353,18 @@ interface SignalDao {
 
     @Query("DELETE FROM signal_identities")
     fun deleteAllIdentities()
+
+    @Query("SELECT * FROM signal_sender_keys WHERE remoteName = :remoteName AND deviceId = :deviceId AND distributionId = :distributionId")
+    fun getSenderKey(remoteName: String, deviceId: Int, distributionId: String): SenderKeyEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun putSenderKey(entity: SenderKeyEntity)
+
+    @Query("DELETE FROM signal_sender_keys WHERE distributionId = :distributionId")
+    fun deleteSenderKeysForDistribution(distributionId: String)
+
+    @Query("DELETE FROM signal_sender_keys")
+    fun deleteAllSenderKeys()
 }
 
 @Dao
@@ -422,6 +484,55 @@ interface PeerDao {
     @Query("SELECT * FROM peer_profiles WHERE displayName LIKE :pattern OR username LIKE :pattern LIMIT 50")
     suspend fun searchProfiles(pattern: String): List<PeerProfileEntity>
 
+    @Query("SELECT * FROM peer_devices WHERE userId = :userId ORDER BY revoked ASC, lastSeenAt DESC")
+    fun observeDevicesFor(userId: String): Flow<List<PeerDeviceEntity>>
+
+    @Query("UPDATE peer_devices SET verified = :verified WHERE id = :id")
+    suspend fun setDeviceVerified(id: String, verified: Boolean)
+
     @Query("DELETE FROM peer_profiles")
     suspend fun clearProfiles()
+}
+
+@Dao
+interface GroupSkdmDao {
+    @Query(
+        "SELECT recipientDeviceRowId FROM group_skdm_states " +
+            "WHERE conversationId = :conversationId AND epoch = :epoch AND distributionId = :distributionId"
+    )
+    suspend fun sentDevicesForEpoch(
+        conversationId: String,
+        epoch: Int,
+        distributionId: String
+    ): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun markSent(entry: GroupSkdmStateEntity)
+
+    @Query("DELETE FROM group_skdm_states WHERE conversationId = :conversationId AND epoch < :minEpoch")
+    suspend fun pruneOldEpochs(conversationId: String, minEpoch: Int)
+
+    @Query("DELETE FROM group_skdm_states WHERE recipientDeviceRowId = :deviceRowId")
+    suspend fun deleteForDevice(deviceRowId: String)
+
+    @Query("DELETE FROM group_skdm_states")
+    suspend fun clear()
+}
+
+@Dao
+interface CallLogDao {
+    @Query("SELECT * FROM call_logs ORDER BY startedAt DESC LIMIT 100")
+    fun observeRecent(): Flow<List<CallLogEntity>>
+
+    @Query("SELECT * FROM call_logs WHERE conversationId = :conversationId ORDER BY startedAt DESC LIMIT 50")
+    fun observeForConversation(conversationId: String): Flow<List<CallLogEntity>>
+
+    @Query("SELECT * FROM call_logs WHERE callId = :callId")
+    suspend fun getById(callId: String): CallLogEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entry: CallLogEntity)
+
+    @Query("DELETE FROM call_logs")
+    suspend fun clear()
 }

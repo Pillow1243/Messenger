@@ -47,6 +47,13 @@ class SupabaseAuth(
     private val _session = MutableStateFlow(restore())
     val session: StateFlow<AuthSession?> = _session.asStateFlow()
 
+    private val _sessionExpired = MutableStateFlow(false)
+    val sessionExpired: StateFlow<Boolean> = _sessionExpired.asStateFlow()
+
+    fun acknowledgeSessionExpired() {
+        _sessionExpired.value = false
+    }
+
     fun currentUserId(): String? = _session.value?.userId
 
     suspend fun signUp(email: String, password: String): AuthSession {
@@ -106,16 +113,24 @@ class SupabaseAuth(
                 body = buildJsonObject { put("refresh_token", current.refreshToken) }
             )
             persist(parse(response, requiresSession = true)).accessToken
-        } catch (e: Exception) {
-            // A rejected refresh token means the session is gone (revoked, expired, rotated).
-            clear()
+        } catch (e: AuthException) {
+            // Preserve the refresh token across transient offline/rate-limit/5xx errors so going
+            // offline never logs the user out; only wipe when the server rejects the grant.
+            if (e.reason == "network" || e.reason == "rate_limited" || e.reason == "server_error") {
+                null
+            } else {
+                clear(expired = true)
+                null
+            }
+        } catch (_: Exception) {
             null
         }
     }
 
-    fun clear() {
+    fun clear(expired: Boolean = false) {
         _session.value = null
         secrets.remove(KEY_SESSION)
+        if (expired) _sessionExpired.value = true
     }
 
     // ------------------------------------------------------------------ internals
@@ -135,6 +150,7 @@ class SupabaseAuth(
     }
 
     private fun persist(session: AuthSession): AuthSession {
+        _sessionExpired.value = false
         _session.value = session
         secrets.put(KEY_SESSION, json.encodeToString(AuthSession.serializer(), session))
         return session

@@ -43,14 +43,19 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
 
-    <!-- Voice notes + QR scanning -->
+    <!-- Voice notes + QR scanning + 1:1 WebRTC audio/video calling -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Foreground mesh service + notifications -->
+    <!-- Foreground mesh/call/media services + notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
@@ -72,6 +77,14 @@
         android:theme="@style/Theme.OfflineMeshMessenger"
         tools:targetApi="33">
 
+        <!-- Programmatic Firebase init so builds succeed without a committed google-services.json -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
@@ -82,12 +95,37 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="offlinemesh" android:host="chat" />
+                <data android:scheme="offlinemesh" android:host="call" />
+            </intent-filter>
         </activity>
 
         <service
             android:name=".service.MeshService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <service
+            android:name=".call.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
+
+        <service
+            android:name=".push.MessengerFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

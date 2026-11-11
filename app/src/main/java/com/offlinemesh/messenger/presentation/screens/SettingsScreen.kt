@@ -15,10 +15,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
@@ -99,6 +102,47 @@ fun SettingsScreen(vm: AppViewModel, onOpenAccount: () -> Unit = {}) {
                     subtitle = stringResource(R.string.account_status),
                     onClick = onOpenAccount
                 )
+            }
+
+            SectionCard(title = stringResource(R.string.section_notifications)) {
+                val notificationsOn = current?.notificationsEnabled ?: true
+                ToggleRow(
+                    icon = Icons.Filled.Notifications,
+                    title = stringResource(R.string.notifications_enable),
+                    subtitle = stringResource(R.string.notifications_enable_hint),
+                    checked = notificationsOn,
+                    onCheckedChange = { vm.setNotificationsEnabled(it) }
+                )
+                if (notificationsOn) {
+                    ToggleRow(
+                        icon = Icons.Filled.Person,
+                        title = stringResource(R.string.notifications_direct),
+                        subtitle = null,
+                        checked = current?.notifyDirect ?: true,
+                        onCheckedChange = { vm.setNotifyDirect(it) }
+                    )
+                    ToggleRow(
+                        icon = Icons.Filled.Group,
+                        title = stringResource(R.string.notifications_groups),
+                        subtitle = null,
+                        checked = current?.notifyGroups ?: true,
+                        onCheckedChange = { vm.setNotifyGroups(it) }
+                    )
+                    ToggleRow(
+                        icon = Icons.Filled.Campaign,
+                        title = stringResource(R.string.notifications_channels),
+                        subtitle = null,
+                        checked = current?.notifyChannels ?: false,
+                        onCheckedChange = { vm.setNotifyChannels(it) }
+                    )
+                    ToggleRow(
+                        icon = Icons.Filled.Call,
+                        title = stringResource(R.string.notifications_calls),
+                        subtitle = stringResource(R.string.notifications_calls_desc),
+                        checked = current?.notifyCalls ?: true,
+                        onCheckedChange = { vm.setNotifyCalls(it) }
+                    )
+                }
             }
 
             SectionCard(title = stringResource(R.string.section_connectors)) {

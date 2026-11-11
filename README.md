@@ -29,24 +29,29 @@ it, and the app works to its full offline extent with no account and no network.
 * **Files and voice notes** — chunked, encrypted per frame, integrity hash on completion.
 * **Diagnostics** — peer status, relay statistics and a topology view.
 
-### Online (new)
+### Online (E2EE hybrid transport)
 
-* **Accounts** — email sign‑up / sign‑in, refresh tokens, session stored under a Keystore key,
-  account deletion.
-* **Multi‑device** — each installation registers its own device id, public bundle and one‑time
-  pre‑keys; devices can be listed and revoked.
-* **Realtime delivery** — envelopes, receipts, typing and reactions over Supabase Realtime. Events
-  are hints: every (re)connection backfills from a stored cursor, so a dropped socket loses nothing.
-* **Offline outbox** — messages sent without a network are queued with capped exponential backoff and
-  flushed by a network‑constrained `WorkManager` job, even after process death.
-* **Messaging** — replies (schema + render), edit, delete‑for‑everyone, delete‑for‑me, reactions,
-  starring, per‑chat drafts, typing indicators, read receipts, unread counts, local search.
-* **Groups and channels** — create, membership, roles, public/private channels, discovery, joining;
-  posting permissions are enforced server‑side.
-* **Unified search** — one field over chats, messages, contacts (all local, decrypted on device) and
-  public accounts/channels (server directory).
-* **Transport indicator** — the chat list always says what is usable right now: `Mesh`, `Online`,
-  `Mesh + online`, `Connecting`.
+* **Accounts & lifecycle** — email sign‑up / sign‑in, Keystore‑wrapped refresh sessions, full
+  server + Auth account deletion (`mm-account-delete` + `mm_delete_me`).
+* **Multi‑device (up to 5 active devices)** — per‑installation identity & PQXDH pre‑keys, **This
+  device** indicator, automatic signed/Kyber pre‑key rotation, remote device revocation, and
+  per‑device 60‑digit safety numbers.
+* **Streaming E2EE media & files** — client‑side 64 KiB streaming AES‑256‑GCM encryption before
+  upload to private `mm-media` storage (resumable TUS/POST up to 128 MB, expiring signed URLs,
+  multi‑attachment picker, inline encrypted thumbnails, audio/voice player, progress/cancel/retry,
+  and SHA‑256 + AEAD integrity verification).
+* **Audited Signal Sender Keys (`v2`) groups** — backed by `org.signal:libsignal-android:0.86.5`
+  (`GroupSessionBuilder`, `GroupCipher`, `SenderKeyDistributionMessage`), preserving `v1` pairwise
+  compatibility with one‑tap `v2` upgrade and automatic epoch/key rotation on member removal or
+  device revocation.
+* **1:1 WebRTC voice & video calling** — DTLS‑SRTP audio/video (`stream-webrtc-android`), incoming
+  & outgoing call UI, mute/speaker/camera/flip controls, foreground call service, and env‑driven
+  TURN credentials (`mm-turn-credentials`).
+* **Zero‑plaintext push wakeups** — FCM data‑only `mm_wakeup` (`mm-push-dispatch` +
+  `MessengerFirebaseMessagingService`) with local decryption, per‑category notification preferences,
+  per‑chat mute, and deep links (see [`docs/OWNER_SETUP.md`](docs/OWNER_SETUP.md)).
+* **Realtime + offline outbox** — WebSocket hints + cursor backfill + `WorkManager` background sync
+  and durable cross‑transport reconciliation (`HybridReconciler`).
 
 ---
 
@@ -66,7 +71,9 @@ A message row is always written *before* any encryption or upload, so a crash mi
 queued message, not a lost one. An online failure never prevents the mesh attempt in the same send.
 
 Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
-[`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/SUPABASE.md`](docs/SUPABASE.md).
+[`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/SUPABASE.md`](docs/SUPABASE.md) ·
+[`docs/OWNER_SETUP.md`](docs/OWNER_SETUP.md) ·
+[`docs/TWO_DEVICE_VALIDATION.md`](docs/TWO_DEVICE_VALIDATION.md).
 
 ---
 

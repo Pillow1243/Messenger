@@ -14,6 +14,7 @@ Applied in order, all idempotent (`create table if not exists`, `create or repla
 | `20261111120100_mm_messaging.sql` | conversations, members, messages, per-device envelopes, receipts, typing, reactions, attachments, reports |
 | `20261111120200_mm_notifications_calls.sql` | push tokens, notification prefs, calls, participants, call signals |
 | `20261111120300_mm_api_storage_realtime.sql` | SECURITY DEFINER RPCs, rate limiter, storage buckets/policies, realtime publication |
+| `20261111180000_mm_phase2_media_push_senderkeys_calls_devices.sql` | `mm-media` private bucket RLS, `mm_sender_key_distributions`, `mm_push_log`, 5-device cap & revocation rotation, pre-key rotation, 1:1 call signaling RPCs |
 
 Every table is prefixed `mm_` to avoid colliding with anything already in the project.
 

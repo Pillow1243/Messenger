@@ -1,9 +1,9 @@
 package com.offlinemesh.messenger
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,8 +11,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
@@ -28,8 +28,10 @@ class MainActivity : AppCompatActivity() {
 
     private val app: MessengerApp get() = application as MessengerApp
 
-    /** Conversation requested by a notification tap, consumed once by the navigation graph. */
+    /** Conversation requested by a notification tap or deep link, consumed once by NavGraph. */
     private val pendingConversation = mutableStateOf<String?>(null)
+    private val pendingCallId = mutableStateOf<String?>(null)
+    private val pendingCallAction = mutableStateOf<String?>(null)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -39,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         requestMeshPermissions()
-        pendingConversation.value = intent?.getStringExtra(MessageNotifier.EXTRA_CONVERSATION)
+        extractIntentTargets(intent)
 
         setContent {
             val vm: AppViewModel = viewModel(factory = AppViewModel.factory(app))
@@ -55,6 +57,18 @@ class MainActivity : AppCompatActivity() {
                 applyLanguage(settings?.language ?: "system")
             }
 
+            LaunchedEffect(pendingCallId.value, pendingCallAction.value) {
+                val cid = pendingCallId.value
+                val action = pendingCallAction.value
+                if (!cid.isNullOrBlank()) {
+                    if (action == MessageNotifier.CALL_ACTION_ANSWER) {
+                        vm.acceptIncomingCall(cid)
+                    }
+                    pendingCallId.value = null
+                    pendingCallAction.value = null
+                }
+            }
+
             OfflineMeshTheme(darkTheme = darkTheme) {
                 NavGraph(
                     vm = vm,
@@ -64,14 +78,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // A fresh launch is a good moment to push anything still queued.
         app.appScope.launch { runCatching { app.chats.retryPending() } }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_CONVERSATION)
+        extractIntentTargets(intent)
+    }
+
+    private fun extractIntentTargets(intent: Intent?) {
+        if (intent == null) return
+        intent.getStringExtra(MessageNotifier.EXTRA_CONVERSATION)?.takeIf { it.isNotBlank() }?.let {
+            pendingConversation.value = it
+        }
+        intent.getStringExtra(MessageNotifier.EXTRA_CALL_ID)?.takeIf { it.isNotBlank() }?.let {
+            pendingCallId.value = it
+            pendingCallAction.value = intent.getStringExtra(MessageNotifier.EXTRA_CALL_ACTION)
+        }
+        // Also support `offlinemesh://chat/<id>` and `offlinemesh://call/<id>` URI deep links
+        intent.data?.let { uri ->
+            if (uri.scheme == "offlinemesh") {
+                val target = uri.lastPathSegment ?: uri.getQueryParameter("id")
+                if (!target.isNullOrBlank()) {
+                    when (uri.host) {
+                        "chat" -> pendingConversation.value = target
+                        "call" -> pendingCallId.value = target
+                    }
+                }
+            }
+        }
     }
 
     override fun onResume() {

@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
@@ -176,6 +178,22 @@ private fun ConversationRow(conversation: ConversationEntity, onClick: () -> Uni
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                if (conversation.pinned) {
+                    Icon(
+                        imageVector = Icons.Filled.PushPin,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp).padding(end = 4.dp)
+                    )
+                }
+                if (conversation.muted) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp).padding(end = 4.dp)
+                    )
+                }
                 Text(
                     text = formatTimestamp(conversation.lastMessageAt),
                     style = MaterialTheme.typography.bodyMedium,

@@ -40,7 +40,9 @@
     <string name="status_delivered">Delivered</string>
     <string name="status_failed">Not delivered</string>
     <string name="file_received">File received</string>
-    <string name="file_too_large">File is too large (maximum 50 MB)</string>
+    <string name="file_too_large">File is too large (max 128 MB online, 50 MB on mesh)</string>
+    <string name="insufficient_storage">Not enough free storage space on this device</string>
+    <string name="integrity_failed">Attachment failed cryptographic integrity verification</string>
     <string name="voice_note">Voice note</string>
     <string name="empty_chat">No messages yet. Say hello!</string>
     <string name="attachment_pick_failed">Could not read that file</string>
@@ -176,7 +178,20 @@
 
     <!-- Notifications -->
     <string name="notifications_messages">Messages</string>
-    <string name="notifications_messages_desc">New messages that arrived while the app was in the background. Nothing is pushed through a server.</string>
+    <string name="notifications_messages_desc">End-to-end encrypted messages decrypted on this device.</string>
+    <string name="notifications_direct">Direct messages</string>
+    <string name="notifications_groups">Group messages</string>
+    <string name="notifications_channels">Channel posts</string>
+    <string name="notifications_calls">Calls</string>
+    <string name="notifications_calls_desc">Incoming 1:1 voice and video calls</string>
+    <string name="section_notifications">Notifications</string>
+    <string name="notifications_enable">Enable notifications</string>
+    <string name="notifications_enable_hint">Alert when messages or calls arrive</string>
+    <string name="push_status_label">Remote wakeup (FCM)</string>
+    <string name="push_status_registered">Active and registered (zero-plaintext wakeup)</string>
+    <string name="push_status_unconfigured">Not configured in this build — Realtime active while app is open</string>
+    <string name="push_status_initialized">Initialized — awaiting registration</string>
+    <string name="push_status_error">Push registration unavailable</string>
 
     <!-- Chat extras -->
     <string name="chat_typing">typing…</string>
@@ -186,8 +201,71 @@
     <string name="chat_reply">Reply</string>
     <string name="chat_star">Star</string>
     <string name="chat_saved">Saved messages</string>
+    <string name="chat_mute">Mute notifications</string>
+    <string name="chat_unmute">Unmute notifications</string>
+    <string name="chat_pin">Pin chat</string>
+    <string name="chat_unpin">Unpin chat</string>
+    <string name="status_read">Read</string>
+    <string name="media_photo">Photo</string>
+    <string name="media_video">Video</string>
+    <string name="media_audio">Audio</string>
+    <string name="media_document">Document</string>
+    <string name="media_uploading">Encrypting &amp; uploading…</string>
+    <string name="media_downloading">Downloading &amp; verifying…</string>
+    <string name="media_paused">Paused</string>
+    <string name="media_cancelled">Cancelled</string>
+    <string name="media_download">Download</string>
+    <string name="media_retry">Retry</string>
+    <string name="media_cancel">Cancel transfer</string>
+    <string name="media_play">Play</string>
+    <string name="media_pause">Pause</string>
+
+    <!-- Group Sender Keys & membership -->
+    <string name="group_info">Group security &amp; members</string>
+    <string name="group_sender_keys_v2">Signal Sender Keys (v2) · Epoch #%1$d</string>
+    <string name="group_pairwise_v1">Pairwise Signal envelopes (v1 legacy)</string>
+    <string name="group_upgrade_v2">Upgrade to Signal Sender Keys (v2)</string>
+    <string name="group_add_member_hint">Search username to add</string>
+    <string name="group_remove_member">Remove</string>
+
+    <!-- 1:1 WebRTC Calling -->
+    <string name="call_voice">Voice call</string>
+    <string name="call_video">Video call</string>
+    <string name="call_incoming_audio">Incoming voice call</string>
+    <string name="call_incoming_video">Incoming video call</string>
+    <string name="call_ongoing_audio">Ongoing voice call</string>
+    <string name="call_ongoing_video">Ongoing video call</string>
+    <string name="call_ringing">Ringing…</string>
+    <string name="call_connecting">Connecting…</string>
+    <string name="call_reconnecting">Reconnecting…</string>
+    <string name="call_ended">Call ended</string>
+    <string name="call_accept">Accept</string>
+    <string name="call_decline">Decline</string>
+    <string name="call_end">End</string>
+    <string name="call_mute_mic">Mute</string>
+    <string name="call_unmute_mic">Unmute</string>
+    <string name="call_speaker">Speaker</string>
+    <string name="call_camera_toggle">Camera</string>
+    <string name="call_flip_camera">Flip</string>
+    <string name="call_stun_only_notice">Direct P2P / STUN mode (TURN relay not configured)</string>
+
+    <!-- Multi-device, blocks & safety -->
+    <string name="device_this_device">This device</string>
+    <string name="device_revoked_badge">Revoked</string>
+    <string name="device_active_count">%1$d of 5 active devices</string>
+    <string name="device_limit_error">Maximum of 5 active devices reached. Sign in from an existing device to revoke an old one.</string>
+    <string name="device_revoked_error">This device was revoked from your account.</string>
+    <string name="device_revoke_action">Revoke</string>
+    <string name="device_revoke_confirm">Revoke this device? Its pre-keys, push tokens, and group Sender Keys will be rotated immediately.</string>
+    <string name="rotate_prekeys">Rotate pre-keys now</string>
+    <string name="block_user">Block user</string>
+    <string name="unblock_user">Unblock user</string>
+    <string name="peer_devices_title">Linked account devices</string>
+
     <string name="action_create">Create</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_delete">Delete</string>
     <string name="action_save">Save</string>
+    <string name="delete_conversation">Delete conversation</string>
+    <string name="delete_conversation_confirm">Delete this conversation and its messages from this device?</string>
 </resources>

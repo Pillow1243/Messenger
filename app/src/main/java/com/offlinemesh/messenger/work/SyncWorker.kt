@@ -11,17 +11,21 @@ import com.offlinemesh.messenger.MessengerApp
 import java.util.concurrent.TimeUnit
 
 /**
- * Periodic housekeeping for both transports: expires stale store-and-forward packets, retries
- * mesh messages that are still waiting for a peer to come into range and flushes the online
- * outbox. The mesh part is purely local; the online part only runs when the user is signed in.
+ * Periodic housekeeping for both transports:
+ *  - Purges stale temp files and expired store-and-forward packets.
+ *  - Retries queued mesh/online messages and flushes the online outbox.
+ *  - Rotates signed/Kyber pre-keys if due and refreshes push token registration.
  */
 class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         val app = applicationContext as MessengerApp
         return try {
+            runCatching { app.files.cleanupStaleTempFiles() }
             app.chats.retryPending()
             if (app.online.isSignedIn && app.online.networkAvailable) {
+                runCatching { app.online.rotatePreKeysIfDue(force = false) }
+                runCatching { app.online.syncPushToken() }
                 runCatching { app.online.drainOutbox() }
                 runCatching { app.online.backfillAll() }
             }
