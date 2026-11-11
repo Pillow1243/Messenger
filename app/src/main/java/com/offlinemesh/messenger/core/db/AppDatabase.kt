@@ -181,8 +181,8 @@ internal val MIGRATION_2_3_STATEMENTS: List<String> = listOf(
         "direction TEXT NOT NULL, " +
         "state TEXT NOT NULL, " +
         "startedAt INTEGER NOT NULL, " +
-        "answeredAt INTEGER DEFAULT NULL, " +
-        "endedAt INTEGER DEFAULT NULL, " +
+        "answeredAt INTEGER, " +
+        "endedAt INTEGER, " +
         "durationSec INTEGER NOT NULL)"
     ,
     "CREATE INDEX IF NOT EXISTS index_call_logs_conversationId ON call_logs (conversationId)",

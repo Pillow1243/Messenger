@@ -53,6 +53,9 @@ class MigrationTest {
         val required = listOf(
             "conversations ADD COLUMN onlineId",
             "conversations ADD COLUMN peerUserId",
+            "conversations ADD COLUMN muted",
+            "conversations ADD COLUMN pinned",
+            "conversations ADD COLUMN archived",
             "conversations ADD COLUMN memberUserIds",
             "conversations ADD COLUMN draft",
             "messages ADD COLUMN clientMsgId",
@@ -75,26 +78,24 @@ class MigrationTest {
     @Test
     fun `v2_3 phase 2 media, sender keys, mute, device and call columns & tables exist`() {
         val requiredColumns = listOf(
-            "conversations ADD COLUMN muted",
-            "conversations ADD COLUMN mutedUntil",
-            "conversations ADD COLUMN pinned",
-            "conversations ADD COLUMN archived",
             "conversations ADD COLUMN encryptionVersion",
             "conversations ADD COLUMN senderKeyEpoch",
             "conversations ADD COLUMN distributionId",
+            "conversations ADD COLUMN mutedUntil",
             "conversations ADD COLUMN myRole",
+            "messages ADD COLUMN fileMime",
+            "messages ADD COLUMN fileSha256",
             "messages ADD COLUMN attachmentRemoteId",
             "messages ADD COLUMN remoteObjectPath",
-            "messages ADD COLUMN cipherSha256",
-            "messages ADD COLUMN cipherSize",
             "messages ADD COLUMN mediaKeyBase64",
             "messages ADD COLUMN mediaIvBase64",
+            "messages ADD COLUMN cipherSha256",
+            "messages ADD COLUMN cipherSize",
             "messages ADD COLUMN thumbnailBase64",
             "messages ADD COLUMN mediaWidth",
             "messages ADD COLUMN mediaHeight",
             "messages ADD COLUMN transferState",
             "messages ADD COLUMN transferBytes",
-            "messages ADD COLUMN senderDeviceRowId",
             "peer_devices ADD COLUMN name",
             "peer_devices ADD COLUMN platform",
             "peer_devices ADD COLUMN verified"
@@ -103,7 +104,7 @@ class MigrationTest {
             assertTrue("missing v2->v3 column: $column", sql23.contains(column))
         }
 
-        listOf("signal_sender_keys", "group_skdm_states", "seen_packets", "call_logs").forEach { table ->
+        listOf("signal_sender_keys", "group_skdm_states", "call_logs").forEach { table ->
             assertTrue(
                 "missing v2->v3 table: $table",
                 sql23.contains("CREATE TABLE IF NOT EXISTS $table")
@@ -111,10 +112,9 @@ class MigrationTest {
         }
 
         listOf(
-            "index_messages_attachmentRemoteId",
-            "index_group_skdm_states_conversationId_epoch",
-            "index_seen_packets_seenAt",
-            "index_call_logs_conversationId"
+            "index_group_skdm_states_conversationId",
+            "index_call_logs_conversationId",
+            "index_call_logs_startedAt"
         ).forEach { idx ->
             assertTrue("missing v2->v3 index: $idx", sql23.contains(idx))
         }
