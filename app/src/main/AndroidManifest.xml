@@ -3,11 +3,19 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      This application is intentionally OFFLINE-ONLY.
-      There is no INTERNET permission, so no message, key or metadata can ever be
-      sent to a server, and no analytics/downloader/update-checker can run.
-      Everything travels over Bluetooth / Wi-Fi Direct using Nearby Connections.
+      Messenger is a hybrid messenger with two independent transports:
+
+      1. Offline mesh - Bluetooth LE / Wi-Fi Direct through Nearby Connections. Works with no
+         network, no SIM and no account; messages are relayed device to device.
+      2. Online - HTTPS + WebSocket to the project's own Supabase instance. Used only when the
+         user signs in; message bodies are still end-to-end encrypted, the server only stores
+         ciphertext envelopes.
+
+      INTERNET is therefore required, but nothing in the mesh path depends on it: with the radio
+      off (or no account) the app behaves exactly like the offline-only build.
     -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Nearby Connections: Bluetooth LE (advertising / discovery) -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
