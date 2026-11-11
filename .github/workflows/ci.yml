@@ -142,8 +142,11 @@ jobs:
       - name: Fail if the committed Room schema is stale
         if: always() && hashFiles('app/schemas/**') != ''
         run: |
-          if ! git diff --quiet -- app/schemas; then
+          # Generated files are untracked on a fresh checkout, so `git diff` alone would miss
+          # them; --porcelain catches both modifications and new schema files.
+          if [ -n "$(git status --porcelain -- app/schemas)" ]; then
             echo "::error::Exported Room schema changed - commit app/schemas so migrations can be reviewed."
+            git status --porcelain -- app/schemas
             git diff --stat -- app/schemas
             exit 1
           fi
