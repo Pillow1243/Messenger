@@ -19,6 +19,10 @@ jobs:
     name: Build, test and package
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # The ubuntu images ship a ready-made SDK; using it avoids an extra download step.
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,17 +33,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Point Gradle at the SDK
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ls "$ANDROID_HOME" || true
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+              "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1 || true
+          fi
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests
-        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
+        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest 2>&1 | tee build.log
 
       - name: Assemble debug + release
-        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
+        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease 2>&1 | tee -a build.log
 
       - name: Collect APKs
         run: |
@@ -56,8 +67,35 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # The build log is mirrored into a commit comment so the failure is visible through the
+      # REST API even when the Actions log endpoint is not reachable.
+      - name: Mirror build log into a commit comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try { log = fs.readFileSync('build.log', 'utf8'); } catch (e) { log = '(no build.log)'; }
+            const tail = log.length > 55000 ? log.slice(-55000) : log;
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: '### CI failure log (tail)\n\n```\n' + tail.replace(/```/g, "'''") + '\n```'
+            });
+
       - name: Publish demo-signed APKs as a GitHub release
-        if: github.event_name == 'push' && github.event.repository.private == false
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: demo-latest
