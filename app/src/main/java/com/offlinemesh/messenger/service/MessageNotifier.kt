@@ -1,13 +1,17 @@
 package com.offlinemesh.messenger.service
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.offlinemesh.messenger.MainActivity
 import com.offlinemesh.messenger.R
 
@@ -39,12 +43,20 @@ object MessageNotifier {
         )
     }
 
+    @SuppressLint("MissingPermission") // guarded by the runtime check below
     fun notifyMessage(
         context: Context,
         conversationId: String,
         title: String,
         body: String
     ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            // The user declined notifications; the chat list still shows the unread count.
+            return
+        }
         ensureChannel(context)
         val intent = Intent(context, MainActivity::class.java).apply {
             putExtra(EXTRA_CONVERSATION, conversationId)
