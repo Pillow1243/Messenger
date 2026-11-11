@@ -18,23 +18,23 @@ class HybridTransitionTest {
     fun `scenario 1 & 2 - mesh to online and online to mesh select unified transports cleanly`() {
         // Scenario 1: Paired & chatting offline first, then user signs in & links conversation
         val meshFirst = TransportSelector.select(
-            TransportContext(onlineSignedIn = false, networkAvailable = false, conversationLinkedOnline = false, peerDirectlyConnected = true)
+            TransportContext(signedIn = false, networkAvailable = false, conversationLinkedOnline = false, meshPeerConnected = true)
         )
         assertEquals(Transport.MESH, meshFirst)
 
         val linkedWithBoth = TransportSelector.select(
-            TransportContext(onlineSignedIn = true, networkAvailable = true, conversationLinkedOnline = true, peerDirectlyConnected = true)
+            TransportContext(signedIn = true, networkAvailable = true, conversationLinkedOnline = true, meshPeerConnected = true)
         )
         assertEquals(Transport.BOTH, linkedWithBoth)
 
         // Scenario 2: Chatted online first, then internet drops and peers meet on Nearby mesh
         val onlineFirst = TransportSelector.select(
-            TransportContext(onlineSignedIn = true, networkAvailable = true, conversationLinkedOnline = true, peerDirectlyConnected = false)
+            TransportContext(signedIn = true, networkAvailable = true, conversationLinkedOnline = true, meshPeerConnected = false)
         )
         assertEquals(Transport.ONLINE, onlineFirst)
 
         val metInFieldOffline = TransportSelector.select(
-            TransportContext(onlineSignedIn = true, networkAvailable = false, conversationLinkedOnline = true, peerDirectlyConnected = true)
+            TransportContext(signedIn = true, networkAvailable = false, conversationLinkedOnline = true, meshPeerConnected = true)
         )
         assertEquals(Transport.MESH, metInFieldOffline)
     }
@@ -43,14 +43,14 @@ class HybridTransitionTest {
     fun `scenario 3 & 4 - zero connectivity queues locally and mid-chat drop falls back to mesh`() {
         // Scenario 3: Completely offline and peer out of range -> QUEUE locally
         val queued = TransportSelector.select(
-            TransportContext(onlineSignedIn = true, networkAvailable = false, conversationLinkedOnline = true, peerDirectlyConnected = false)
+            TransportContext(signedIn = true, networkAvailable = false, conversationLinkedOnline = true, meshPeerConnected = false)
         )
         assertEquals(Transport.QUEUE, queued)
         assertFalse(TransportSelector.canAttemptNow(queued))
 
         // Scenario 4: Wi-Fi drops mid-conversation while peer is still connected via BLE/Wi-Fi Direct
         val fallback = TransportSelector.select(
-            TransportContext(onlineSignedIn = true, networkAvailable = false, conversationLinkedOnline = true, peerDirectlyConnected = true)
+            TransportContext(signedIn = true, networkAvailable = false, conversationLinkedOnline = true, meshPeerConnected = true)
         )
         assertEquals(Transport.MESH, fallback)
         assertTrue(TransportSelector.canAttemptNow(fallback))
@@ -124,10 +124,10 @@ class HybridTransitionTest {
         // Scenario 9: Supabase completely unreachable -> offline mesh continues with zero online dependency
         val meshDuringOutage = TransportSelector.select(
             TransportContext(
-                onlineSignedIn = true,
+                signedIn = true,
                 networkAvailable = false,
                 conversationLinkedOnline = false,
-                peerDirectlyConnected = true
+                meshPeerConnected = true
             )
         )
         assertEquals(Transport.MESH, meshDuringOutage)
