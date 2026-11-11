@@ -1,59 +1,102 @@
 package com.offlinemesh.messenger.core.crypto
 
-import android.util.Base64
-import org.whispersystems.signal.protocol.Curve
-import org.whispersystems.signal.protocol.PreKeyBundle
-import org.whispersystems.signal.protocol.PreKeyRecord
-import org.whispersystems.signal.protocol.SignedPreKeyRecord
-import java.io.ByteArrayInputStream
+import org.signal.libsignal.protocol.IdentityKey
+import org.signal.libsignal.protocol.ecc.ECPublicKey
+import org.signal.libsignal.protocol.kem.KEMPublicKey
+import org.signal.libsignal.protocol.state.PreKeyBundle
 import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.nio.BufferUnderflowException
+import java.nio.ByteBuffer
 
+/**
+ * Wire/QR encoding for a Signal [PreKeyBundle].
+ *
+ * Layout (big endian):
+ *   magic "MB1" | version | regId | deviceId | preKeyId | signedPreKeyId | kyberPreKeyId
+ *   | len+bytes preKeyPublic | len+bytes signedPreKeyPublic | len+bytes signedPreKeySignature
+ *   | len+bytes identityKey | len+bytes kyberPreKeyPublic | len+bytes kyberPreKeySignature
+ *
+ * A zero length pre-key means "no one-time pre-key available".
+ */
 object PreKeyBundleCodec {
 
-    fun encode(bundle: PreKeyBundle): String {
-        val baos = ByteArrayOutputStream()
-        val out = DataOutputStream(baos)
-        out.writeInt(bundle.registrationId)
-        out.writeInt(bundle.deviceId)
-        out.writeInt(bundle.preKey.id)
-        writeBytes(out, Curve.encodePublicKey(bundle.preKey.publicKey))
-        out.writeInt(bundle.signedPreKey.id)
-        writeBytes(out, Curve.encodePublicKey(bundle.signedPreKey.publicKey))
-        writeBytes(out, bundle.signedPreKey.signature)
-        writeBytes(out, bundle.identityKey)
-        writeBytes(out, bundle.identitySignature)
-        out.flush()
-        return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+    private val MAGIC = byteArrayOf('M'.code.toByte(), 'B'.code.toByte(), '1'.code.toByte())
+    private const val VERSION = 1
+    private const val MAX_FIELD = 8 * 1024
+
+    fun encode(bundle: PreKeyBundle): ByteArray {
+        val out = ByteArrayOutputStream(2048)
+        DataOutputStream(out).use { stream ->
+            stream.write(MAGIC)
+            stream.writeByte(VERSION)
+            stream.writeInt(bundle.registrationId)
+            stream.writeInt(bundle.deviceId)
+            stream.writeInt(bundle.preKeyId)
+            stream.writeInt(bundle.signedPreKeyId)
+            stream.writeInt(bundle.kyberPreKeyId)
+            stream.writeBlob(bundle.preKey?.serialize() ?: ByteArray(0))
+            stream.writeBlob(bundle.signedPreKey.serialize())
+            stream.writeBlob(bundle.signedPreKeySignature)
+            stream.writeBlob(bundle.identityKey.serialize())
+            stream.writeBlob(bundle.kyberPreKey.serialize())
+            stream.writeBlob(bundle.kyberPreKeySignature)
+            stream.flush()
+        }
+        return out.toByteArray()
     }
 
-    fun decode(encoded: String): PreKeyBundle {
-        val bytes = Base64.decode(encoded, Base64.NO_WRAP)
-        val inp = DataInputStream(ByteArrayInputStream(bytes))
-        val registrationId = inp.readInt()
-        val deviceId = inp.readInt()
-        val preKeyId = inp.readInt()
-        val preKeyPub = readBytes(inp)
-        val signedId = inp.readInt()
-        val signedPub = readBytes(inp)
-        val signedSig = readBytes(inp)
-        val identityKey = readBytes(inp)
-        val identitySig = readBytes(inp)
-        val preKey = PreKeyRecord(preKeyId, Curve.decodePublicKey(preKeyPub))
-        val signed = SignedPreKeyRecord(signedId, Curve.decodePublicKey(signedPub), signedSig)
-        return PreKeyBundle(registrationId, deviceId, preKey, signed, identityKey, identitySig)
+    fun decode(bytes: ByteArray): PreKeyBundle {
+        val buffer = ByteBuffer.wrap(bytes)
+        try {
+            val magic = ByteArray(MAGIC.size)
+            buffer.get(magic)
+            require(magic.contentEquals(MAGIC)) { "not a mesh pre-key bundle" }
+            val version = buffer.get().toInt()
+            require(version == VERSION) { "unsupported bundle version $version" }
+            val registrationId = buffer.getInt()
+            val deviceId = buffer.getInt()
+            val preKeyId = buffer.getInt()
+            val signedPreKeyId = buffer.getInt()
+            val kyberPreKeyId = buffer.getInt()
+            val preKeyBytes = buffer.readBlob()
+            val signedPreKeyBytes = buffer.readBlob()
+            val signedPreKeySignature = buffer.readBlob()
+            val identityKeyBytes = buffer.readBlob()
+            val kyberBytes = buffer.readBlob()
+            val kyberSignature = buffer.readBlob()
+            require(buffer.remaining() == 0) { "trailing bytes in bundle" }
+
+            val preKeyPublic = if (preKeyBytes.isEmpty()) null else ECPublicKey(preKeyBytes)
+            return PreKeyBundle(
+                registrationId,
+                deviceId,
+                preKeyId,
+                preKeyPublic,
+                signedPreKeyId,
+                ECPublicKey(signedPreKeyBytes),
+                signedPreKeySignature,
+                IdentityKey(identityKeyBytes),
+                kyberPreKeyId,
+                KEMPublicKey(kyberBytes),
+                kyberSignature
+            )
+        } catch (e: BufferUnderflowException) {
+            throw IllegalArgumentException("truncated pre-key bundle", e)
+        }
     }
 
-    private fun writeBytes(out: DataOutputStream, bytes: ByteArray) {
-        out.writeInt(bytes.size)
-        out.write(bytes)
+    private fun DataOutputStream.writeBlob(bytes: ByteArray) {
+        require(bytes.size <= MAX_FIELD) { "bundle field too large" }
+        writeInt(bytes.size)
+        write(bytes)
     }
 
-    private fun readBytes(inp: DataInputStream): ByteArray {
-        val len = inp.readInt()
-        val bytes = ByteArray(len)
-        inp.readFully(bytes)
+    private fun ByteBuffer.readBlob(): ByteArray {
+        val length = getInt()
+        require(length in 0..MAX_FIELD) { "invalid bundle field length $length" }
+        val bytes = ByteArray(length)
+        get(bytes)
         return bytes
     }
 }

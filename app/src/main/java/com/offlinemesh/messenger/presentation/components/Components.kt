@@ -1,9 +1,10 @@
 package com.offlinemesh.messenger.presentation.components
 
 import android.graphics.Bitmap
-import android.graphics.Color
+import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,172 +13,253 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Error
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
-import com.google.zxing.MultiFormatWriter
-import com.offlinemesh.messenger.R
-import com.offlinemesh.messenger.core.db.MessageEntity
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 
 @Composable
-fun MessageBubble(
-    message: MessageEntity,
-    isMine: Boolean,
-    onPlayVoice: (File) -> Unit
-) {
-    val bubbleColor = if (isMine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
-    val textColor = if (isMine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.Bottom
-    ) {
-        if (isMine) Spacer(modifier = Modifier.weight(1f))
-        Column(
-            modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(bubbleColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            when (message.type) {
-                "VOICE" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = {
-                            message.filePath?.let { onPlayVoice(File(it)) }
-                        }) {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = stringResource(R.string.voice_note))
-                        }
-                        Icon(Icons.Filled.Mic, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.voice_note),
-                            color = textColor,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-                "FILE" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Description, contentDescription = null, tint = textColor)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = message.fileName ?: message.body,
-                            color = textColor,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-                else -> {
-                    Text(
-                        text = message.body,
-                        color = textColor,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = formatTime(message.timestamp),
-                    color = textColor.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.labelSmall
-                )
-                if (isMine) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    StatusIcon(message.status)
-                }
-            }
-        }
-        if (!isMine) Spacer(modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun StatusIcon(status: String) {
-    val (icon, desc) = when (status) {
-        "QUEUED" -> Icons.Filled.Schedule to stringResource(R.string.queued)
-        "SENT" -> Icons.Filled.Check to stringResource(R.string.sent)
-        "DELIVERED" -> Icons.Filled.CheckCircle to stringResource(R.string.delivered)
-        "READ" -> Icons.Filled.CheckCircle to stringResource(R.string.read)
-        "FAILED" -> Icons.Filled.Error to stringResource(R.string.failed)
-        else -> Icons.Filled.Check to stringResource(R.string.sent)
-    }
-    Icon(
-        imageVector = icon,
-        contentDescription = desc,
-        modifier = Modifier.size(14.dp)
-    )
-}
-
-fun formatTime(timestamp: Long): String {
-    val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
-
-fun generateQrBitmap(text: String, size: Int = 512): Bitmap {
-    val matrix = MultiFormatWriter().encode(text, BarcodeFormat.QR_CODE, size, size)
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
-    for (x in 0 until size) {
-        for (y in 0 until size) {
-            bitmap.setPixel(x, y, if (matrix.get(x, y)) Color.BLACK else Color.WHITE)
+fun Avatar(name: String, size: Int = 44, modifier: Modifier = Modifier) {
+    val initials = remember(name) {
+        val parts = name.trim().split(" ").filter { it.isNotEmpty() }
+        when {
+            parts.isEmpty() -> "?"
+            parts.size == 1 -> parts[0].take(2).uppercase()
+            else -> (parts[0].first().toString() + parts[1].first().toString()).uppercase()
         }
     }
-    return bitmap
-}
-
-@Composable
-fun QrImage(text: String, modifier: Modifier = Modifier) {
-    val bitmap = generateQrBitmap(text)
-    Image(
-        bitmap = bitmap.asImageBitmap(),
-        contentDescription = null,
-        modifier = modifier
-            .size(280.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(androidx.compose.ui.graphics.Color.White)
-            .padding(12.dp)
+    val palette = listOf(
+        MaterialTheme.colorScheme.primaryContainer,
+        MaterialTheme.colorScheme.secondaryContainer,
+        MaterialTheme.colorScheme.tertiaryContainer
     )
-}
-
-@Composable
-fun AvatarCircle(name: String, modifier: Modifier = Modifier) {
-    val initial = name.firstOrNull()?.uppercase() ?: "?"
+    val color = palette[Math.abs(name.hashCode()) % palette.size]
     Box(
         modifier = modifier
-            .size(48.dp)
+            .size(size.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primaryContainer),
+            .background(color),
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = initial,
+            text = initials,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.SemiBold
         )
     }
+}
+
+@Composable
+fun SectionCard(
+    title: String? = null,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (title != null) {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 8.dp)
+            )
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+            ),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(modifier = Modifier.padding(vertical = 4.dp)) { content() }
+        }
+    }
+}
+
+@Composable
+fun ToggleRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 14.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+    }
+}
+
+@Composable
+fun InfoRow(label: String, value: String, mono: Boolean = false) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            value,
+            style = if (mono) MaterialTheme.typography.bodyMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            else MaterialTheme.typography.bodyLarge
+        )
+    }
+}
+
+@Composable
+fun ActionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    danger: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 14.dp)
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        TextButton(onClick = onClick) { Text("›") }
+    }
+}
+
+@Composable
+fun EmptyState(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(56.dp),
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+fun QrCode(content: String, size: Int = 240) {
+    val bitmap = remember(content) { generateQr(content, size) }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = content,
+            modifier = Modifier
+                .size(size.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(androidx.compose.ui.graphics.Color.White)
+                .padding(8.dp)
+        )
+    } else {
+        Text("QR", style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+fun generateQr(content: String, sizePx: Int): Bitmap? = try {
+    val hints = mapOf(
+        EncodeHintType.CHARACTER_SET to "UTF-8",
+        EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+        EncodeHintType.MARGIN to 1
+    )
+    val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    for (x in 0 until sizePx) {
+        for (y in 0 until sizePx) {
+            bitmap.setPixel(x, y, if (matrix.get(x, y)) AndroidColor.BLACK else AndroidColor.WHITE)
+        }
+    }
+    bitmap
+} catch (e: Exception) {
+    null
 }

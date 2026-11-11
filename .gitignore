@@ -14,3 +14,7 @@
 .cxx
 *.apk
 *.aab
+
+# demo build outputs
+/artifacts
+*.keystore

@@ -1,189 +1,293 @@
 package com.offlinemesh.messenger.core.crypto
 
-import android.util.Base64
+import android.util.Log
 import com.offlinemesh.messenger.core.db.AppDatabase
 import com.offlinemesh.messenger.core.db.KeyValueEntity
-import com.offlinemesh.messenger.core.db.PreKeyEntity
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import org.whispersystems.signal.protocol.CiphertextMessage
-import org.whispersystems.signal.protocol.Curve
-import org.whispersystems.signal.protocol.IdentityKey
-import org.whispersystems.signal.protocol.IdentityKeyPair
-import org.whispersystems.signal.protocol.KeyPairType
-import org.whispersystems.signal.protocol.PreKeyBundle
-import org.whispersystems.signal.protocol.RemoteSessionName
-import org.whispersystems.signal.protocol.SessionBuilder
-import org.whispersystems.signal.protocol.SessionCipher
-import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.Mac
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
+import org.signal.libsignal.protocol.DuplicateMessageException
+import org.signal.libsignal.protocol.IdentityKey
+import org.signal.libsignal.protocol.IdentityKeyPair
+import org.signal.libsignal.protocol.SessionBuilder
+import org.signal.libsignal.protocol.SessionCipher
+import org.signal.libsignal.protocol.SignalProtocolAddress
+import org.signal.libsignal.protocol.UntrustedIdentityException
+import org.signal.libsignal.protocol.ecc.ECKeyPair
+import org.signal.libsignal.protocol.fingerprint.NumericFingerprintGenerator
+import org.signal.libsignal.protocol.kem.KEMKeyPair
+import org.signal.libsignal.protocol.kem.KEMKeyType
+import org.signal.libsignal.protocol.message.CiphertextMessage
+import org.signal.libsignal.protocol.message.PreKeySignalMessage
+import org.signal.libsignal.protocol.message.SignalMessage
+import org.signal.libsignal.protocol.state.KyberPreKeyRecord
+import org.signal.libsignal.protocol.state.PreKeyBundle
+import org.signal.libsignal.protocol.state.PreKeyRecord
+import org.signal.libsignal.protocol.state.SignedPreKeyRecord
+import org.signal.libsignal.protocol.util.KeyHelper
 
+/** Keys used inside the encrypted key/value table. */
+object CryptoKeys {
+    const val IDENTITY_KEY_PAIR = "signal_identity_key_pair"
+    const val REGISTRATION_ID = "signal_registration_id"
+    const val SIGNED_PRE_KEY_ID = "signal_signed_pre_key_id"
+    const val KYBER_PRE_KEY_ID = "signal_kyber_pre_key_id"
+    const val NEXT_PRE_KEY_ID = "signal_next_pre_key_id"
+    const val LAST_HANDED_PRE_KEY_ID = "signal_last_handed_pre_key_id"
+
+    /** One device per installation: the mesh address is (deviceId, 1). */
+    const val DEVICE_ID = 1
+    const val TARGET_PRE_KEY_COUNT = 20
+    const val MIN_PRE_KEY_COUNT = 6
+    const val SAFETY_NUMBER_ITERATIONS = 5200
+    const val SAFETY_NUMBER_VERSION = 2
+}
+
+class CryptoException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** No session has been established yet - the peer has not been in range. */
+class NoSessionYetException(val deviceId: String) : Exception("No session with $deviceId")
+
+/** The ciphertext was already decrypted once (a retransmission reached us twice). */
+class DuplicateCiphertextException(val deviceId: String, cause: Throwable?) :
+    Exception("Duplicate ciphertext from $deviceId", cause)
+
+/** The peer presented a different identity key than the one we stored. */
+class IdentityChangedException(val deviceId: String) :
+    Exception("Identity key for $deviceId changed")
+
+/**
+ * End-to-end encryption on top of the official Signal Protocol implementation
+ * (PQXDH initial agreement + Double Ratchet), one session per peer device.
+ *
+ * Every method blocks on SQLCipher I/O, so the public suspend API hops to Dispatchers.IO.
+ */
 class CryptoManager(
     private val db: AppDatabase,
-    private val store: SignalStore
+    val store: SignalStore
 ) {
-    companion object {
-        private const val MODE_SIGNAL: Byte = 0x01
-        private const val MODE_AES_GCM: Byte = 0x02
-        private const val HKDF_INFO = "mesh-e2ee-v1"
-        private const val DEVICE_ID = 1
-    }
+    private val kv = db.keyValueDao()
+    private val dao = db.signalDao()
 
-    suspend fun ensureIdentityKeys() = withContext(Dispatchers.IO) {
-        if (db.keyValueDao().get("identity_public") != null) return@withContext
-        val keyPair = Curve.generateKeyPair(KeyPairType.KEY_TYPE_EC)
-        val identity = IdentityKeyPair(IdentityKey(keyPair.public), keyPair.private)
-        val registrationId = Curve.generateRegistrationId(false)
-        val signedPreKey = Curve.generateSignedPreKey(identity, 1)
-        val preKeys = Curve.generatePreKeys(1, 20)
-        db.keyValueDao().put(
-            KeyValueEntity("identity_public", Base64.encodeToString(Curve.encodePublicKey(keyPair.public), Base64.NO_WRAP))
-        )
-        db.keyValueDao().put(
-            KeyValueEntity("identity_private", Base64.encodeToString(Curve.encodePrivateKey(keyPair.private), Base64.NO_WRAP))
-        )
-        db.keyValueDao().put(KeyValueEntity("registration_id", registrationId.toString()))
-        db.keyValueDao().put(KeyValueEntity("signed_prekey_id", "1"))
-        db.keyValueDao().put(
-            KeyValueEntity(
-                "signed_prekey_public",
-                Base64.encodeToString(Curve.encodePublicKey(signedPreKey.publicKey), Base64.NO_WRAP)
+    // ------------------------------------------------------------------ setup
+
+    suspend fun ensureIdentity() = withContext(Dispatchers.IO) { ensureIdentityBlocking() }
+
+    fun ensureIdentityBlocking() {
+        if (kv.get(CryptoKeys.IDENTITY_KEY_PAIR) == null) {
+            val identity = IdentityKeyPair.generate()
+            kv.put(KeyValueEntity(CryptoKeys.IDENTITY_KEY_PAIR, Base64Codec.encode(identity.serialize())))
+            kv.put(
+                KeyValueEntity(
+                    CryptoKeys.REGISTRATION_ID,
+                    KeyHelper.generateRegistrationId(false).toString()
+                )
             )
-        )
-        db.keyValueDao().put(
-            KeyValueEntity(
-                "signed_prekey_signature",
-                Base64.encodeToString(signedPreKey.signature, Base64.NO_WRAP)
-            )
-        )
-        preKeys.forEach { pk ->
-            db.signalDao().upsertPreKey(
-                PreKeyEntity(pk.id, Base64.encodeToString(Curve.encodePublicKey(pk.publicKey), Base64.NO_WRAP))
-            )
+            kv.put(KeyValueEntity(CryptoKeys.NEXT_PRE_KEY_ID, "1"))
+            createSignedPreKey(identity)
+            createKyberPreKey(identity)
+            generatePreKeys(CryptoKeys.TARGET_PRE_KEY_COUNT)
+            Log.i(TAG, "Generated fresh Signal identity")
+        } else {
+            if (dao.preKeyCount() < CryptoKeys.MIN_PRE_KEY_COUNT) {
+                generatePreKeys(CryptoKeys.TARGET_PRE_KEY_COUNT - dao.preKeyCount())
+            }
+            if (dao.allKyberPreKeys().isEmpty()) {
+                createKyberPreKey(store.getIdentityKeyPair())
+            }
+            if (dao.allSignedPreKeys().isEmpty()) {
+                createSignedPreKey(store.getIdentityKeyPair())
+            }
         }
     }
 
-    fun getIdentityPublicKeyBytes(): ByteArray = runBlocking {
-        val b64 = db.keyValueDao().get("identity_public") ?: throw IllegalStateException("Identity not ready")
-        Base64.decode(b64, Base64.NO_WRAP)
+    private fun createSignedPreKey(identity: IdentityKeyPair): Int {
+        val id = (kv.get(CryptoKeys.SIGNED_PRE_KEY_ID)?.toIntOrNull() ?: 0) + 1
+        val pair = ECKeyPair.generate()
+        // The signature proves the signed pre-key belongs to this identity.
+        val signature = identity.privateKey.calculateSignature(pair.publicKey.serialize())
+        store.storeSignedPreKey(
+            id,
+            SignedPreKeyRecord(id, System.currentTimeMillis(), pair, signature)
+        )
+        kv.put(KeyValueEntity(CryptoKeys.SIGNED_PRE_KEY_ID, id.toString()))
+        return id
     }
 
-    fun getRegistrationId(): Int = runBlocking {
-        db.keyValueDao().get("registration_id")?.toIntOrNull() ?: 0
+    private fun createKyberPreKey(identity: IdentityKeyPair): Int {
+        val id = (kv.get(CryptoKeys.KYBER_PRE_KEY_ID)?.toIntOrNull() ?: 0) + 1
+        val pair = KEMKeyPair.generate(KEMKeyType.KYBER_1024)
+        val signature = identity.privateKey.calculateSignature(pair.publicKey.serialize())
+        store.storeKyberPreKey(
+            id,
+            KyberPreKeyRecord(id, System.currentTimeMillis(), pair, signature)
+        )
+        kv.put(KeyValueEntity(CryptoKeys.KYBER_PRE_KEY_ID, id.toString()))
+        return id
     }
 
-    fun buildPreKeyBundle(): PreKeyBundle = runBlocking {
-        val signedId = db.keyValueDao().get("signed_prekey_id")?.toIntOrNull() ?: 1
-        val signed = store.getSignedPreKey(signedId)
-        var preKey: org.whispersystems.signal.protocol.PreKeyRecord? = null
-        for (id in 1..20) {
+    private fun generatePreKeys(count: Int) {
+        var next = kv.get(CryptoKeys.NEXT_PRE_KEY_ID)?.toIntOrNull() ?: 1
+        repeat(count.coerceAtLeast(0)) {
+            val id = next++
+            store.storePreKey(id, PreKeyRecord(id, ECKeyPair.generate()))
+        }
+        kv.put(KeyValueEntity(CryptoKeys.NEXT_PRE_KEY_ID, next.toString()))
+    }
+
+    // ---------------------------------------------------------------- bundles
+
+    /**
+     * Builds this device's pre-key bundle. A fresh one-time pre-key is handed out per call and
+     * rotates through the pool; when the pool is empty we fall back to "no one-time pre-key"
+     * (0xFF.. sentinel) which is still a valid PQXDH bundle.
+     */
+    suspend fun currentBundle(): PreKeyBundle = withContext(Dispatchers.IO) { buildBundle() }
+
+    private fun buildBundle(): PreKeyBundle {
+        val identity = store.getIdentityKeyPair()
+        val signedId = kv.get(CryptoKeys.SIGNED_PRE_KEY_ID)?.toIntOrNull()
+            ?: createSignedPreKey(identity)
+        val signed = store.loadSignedPreKey(signedId)
+        val kyberId = kv.get(CryptoKeys.KYBER_PRE_KEY_ID)?.toIntOrNull()
+            ?: createKyberPreKey(identity)
+        val kyber = store.loadKyberPreKey(kyberId)
+        val preKey = pickPreKey()
+
+        return PreKeyBundle(
+            store.getLocalRegistrationId(),
+            CryptoKeys.DEVICE_ID,
+            preKey?.id ?: PreKeyBundle.NULL_PRE_KEY_ID,
+            preKey?.keyPair?.publicKey,
+            signedId,
+            signed.keyPair.publicKey,
+            signed.signature,
+            identity.publicKey,
+            kyberId,
+            kyber.keyPair.publicKey,
+            kyber.signature
+        )
+    }
+
+    private fun pickPreKey(): PreKeyRecord? {
+        val ids = dao.preKeyIds().sorted()
+        if (ids.isEmpty()) return null
+        val last = kv.get(CryptoKeys.LAST_HANDED_PRE_KEY_ID)?.toIntOrNull() ?: -1
+        val chosen = ids.firstOrNull { it > last } ?: ids.first()
+        kv.put(KeyValueEntity(CryptoKeys.LAST_HANDED_PRE_KEY_ID, chosen.toString()))
+        return runCatching { store.loadPreKey(chosen) }.getOrNull()
+    }
+
+    /** Called when a peer's HELLO arrived with their bundle. Establishes/refreshes the session. */
+    suspend fun processPeerBundle(deviceId: String, encodedBundle: ByteArray) =
+        withContext(Dispatchers.IO) {
+            val bundle = PreKeyBundleCodec.decode(encodedBundle)
+            val address = SignalProtocolAddress(deviceId, CryptoKeys.DEVICE_ID)
             try {
-                preKey = store.getPreKey(id)
-                break
+                SessionBuilder(store, address).process(bundle)
+            } catch (e: UntrustedIdentityException) {
+                throw IdentityChangedException(deviceId)
             } catch (e: Exception) {
+                throw CryptoException("Could not establish a session with $deviceId", e)
             }
         }
-        if (preKey == null) throw IllegalStateException("No prekeys available")
-        val identityPair = store.getIdentityKeyPair() ?: throw IllegalStateException("Identity not ready")
-        val identityBytes = identityPair.publicKey.serialize()
-        val signature = Curve.generateSignature(identityPair.privateKey, signed.publicKey.encoded)
-        PreKeyBundle(getRegistrationId(), DEVICE_ID, preKey, signed, identityBytes, signature)
-    }
 
-    fun processPreKeyBundle(remoteDeviceId: String, encodedBundle: String) {
-        val bundle = PreKeyBundleCodec.decode(encodedBundle)
-        val builder = SessionBuilder(store, RemoteSessionName(remoteDeviceId, DEVICE_ID))
-        builder.processPreKeyBundle(bundle)
-    }
+    // ------------------------------------------------------------- encryption
 
-    fun processIdentity(remoteDeviceId: String, identityBytes: ByteArray) {
-        val identity = IdentityKey(identityBytes)
-        store.saveIdentity(RemoteSessionName(remoteDeviceId, DEVICE_ID), identity)
-    }
+    fun hasSession(deviceId: String): Boolean =
+        store.containsSession(SignalProtocolAddress(deviceId, CryptoKeys.DEVICE_ID))
 
-    fun encrypt(remoteDeviceId: String, plaintext: ByteArray): ByteArray {
-        val name = RemoteSessionName(remoteDeviceId, DEVICE_ID)
-        if (store.containsSession(name)) {
-            val cipher = SessionCipher(store, name)
-            val message = cipher.encrypt(plaintext)
-            return byteArrayOf(MODE_SIGNAL) + message.serialize()
-        }
-        val identity = store.getIdentity(name)
-            ?: throw IllegalStateException("No identity known for $remoteDeviceId")
-        val myPair = store.getIdentityKeyPair() ?: throw IllegalStateException("Identity not ready")
-        val agreement = Curve.calculateAgreement(myPair.privateKey, identity.publicKey)
-        val key = hkdf(agreement, HKDF_INFO.toByteArray(Charsets.UTF_8), 32)
-        return byteArrayOf(MODE_AES_GCM) + aesGcmEncrypt(key, plaintext)
-    }
-
-    fun decrypt(remoteDeviceId: String, data: ByteArray): ByteArray {
-        if (data.isEmpty()) throw IllegalArgumentException("Empty ciphertext")
-        return when (data[0]) {
-            MODE_SIGNAL -> {
-                val message = CiphertextMessage.deserialize(data.copyOfRange(1, data.size))
-                SessionCipher(store, RemoteSessionName(remoteDeviceId, DEVICE_ID)).decrypt(message)
+    suspend fun encrypt(deviceId: String, plaintext: ByteArray): ByteArray =
+        withContext(Dispatchers.IO) {
+            val address = SignalProtocolAddress(deviceId, CryptoKeys.DEVICE_ID)
+            if (!store.containsSession(address)) throw NoSessionYetException(deviceId)
+            try {
+                val message = SessionCipher(store, address).encrypt(plaintext)
+                // Prepend the Signal message type so the receiver knows how to parse it.
+                byteArrayOf(message.type.toByte()) + message.serialize()
+            } catch (e: Exception) {
+                throw CryptoException("Encryption failed for $deviceId", e)
             }
-            MODE_AES_GCM -> {
-                val identity = store.getIdentity(RemoteSessionName(remoteDeviceId, DEVICE_ID))
-                    ?: throw IllegalStateException("No identity known for $remoteDeviceId")
-                val myPair = store.getIdentityKeyPair() ?: throw IllegalStateException("Identity not ready")
-                val agreement = Curve.calculateAgreement(myPair.privateKey, identity.publicKey)
-                val key = hkdf(agreement, HKDF_INFO.toByteArray(Charsets.UTF_8), 32)
-                aesGcmDecrypt(key, data.copyOfRange(1, data.size))
+        }
+
+    suspend fun decrypt(deviceId: String, envelope: ByteArray): ByteArray =
+        withContext(Dispatchers.IO) {
+            require(envelope.size > 1) { "ciphertext too short" }
+            val type = envelope[0].toInt()
+            val payload = envelope.copyOfRange(1, envelope.size)
+            val address = SignalProtocolAddress(deviceId, CryptoKeys.DEVICE_ID)
+            val cipher = SessionCipher(store, address)
+            try {
+                when (type) {
+                    CiphertextMessage.PREKEY_TYPE -> cipher.decrypt(PreKeySignalMessage(payload))
+                    CiphertextMessage.WHISPER_TYPE -> cipher.decrypt(SignalMessage(payload))
+                    else -> throw CryptoException("Unknown ciphertext type $type")
+                }
+            } catch (e: DuplicateMessageException) {
+                throw DuplicateCiphertextException(deviceId, e)
+            } catch (e: CryptoException) {
+                throw e
+            } catch (e: Exception) {
+                throw CryptoException("Decryption failed for $deviceId", e)
             }
-            else -> throw IllegalArgumentException("Unknown crypto mode: ${data[0]}")
         }
+
+    // -------------------------------------------------------------- identities
+
+    suspend fun myIdentityKey(): IdentityKey = withContext(Dispatchers.IO) {
+        store.getIdentityKeyPair().publicKey
     }
 
-    fun fingerprint(remoteDeviceId: String): String {
-        val identity = store.getIdentity(RemoteSessionName(remoteDeviceId, DEVICE_ID)) ?: return ""
-        return identity.serialize().joinToString("") { "%02x".format(it) }.chunked(8).joinToString(" ")
+    fun encodeIdentityKey(key: IdentityKey): ByteArray = key.serialize()
+
+    suspend fun registrationId(): Int = withContext(Dispatchers.IO) {
+        store.getLocalRegistrationId()
     }
 
-    fun myFingerprint(): String {
-        val bytes = getIdentityPublicKeyBytes()
-        return bytes.joinToString("") { "%02x".format(it) }.chunked(8).joinToString(" ")
-    }
-
-    private fun hkdf(ikm: ByteArray, info: ByteArray, length: Int): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
-        val prk = mac.doFinal(ikm)
-        val out = ByteArray(length)
-        var t = ByteArray(0)
-        var pos = 0
-        var counter = 1
-        while (pos < length) {
-            mac.init(SecretKeySpec(prk, "HmacSHA256"))
-            mac.update(t)
-            mac.update(info)
-            mac.update(counter.toByte())
-            t = mac.doFinal()
-            val n = minOf(t.size, length - pos)
-            System.arraycopy(t, 0, out, pos, n)
-            pos += n
-            counter++
+    /** The 60-digit safety number shown to users for out-of-band verification. */
+    suspend fun safetyNumber(deviceId: String, localDeviceId: String): String? =
+        withContext(Dispatchers.IO) {
+            val local = store.getIdentityKeyPair()
+            val remote = store.getIdentity(
+                SignalProtocolAddress(deviceId, CryptoKeys.DEVICE_ID)
+            ) ?: return@withContext null
+            val generator = NumericFingerprintGenerator(CryptoKeys.SAFETY_NUMBER_ITERATIONS)
+            val fingerprint = generator.createFor(
+                CryptoKeys.SAFETY_NUMBER_VERSION,
+                localDeviceId.toByteArray(Charsets.UTF_8),
+                local.publicKey,
+                deviceId.toByteArray(Charsets.UTF_8),
+                remote
+            )
+            fingerprint.displayableFingerprint.displayText
         }
-        return out
+
+    /** Drops the session and stored identity for a peer, so a new identity can be trusted. */
+    suspend fun forgetIdentity(deviceId: String) = withContext(Dispatchers.IO) {
+        standaloneForget(deviceId)
     }
 
-    private fun aesGcmEncrypt(key: ByteArray, plaintext: ByteArray): ByteArray {
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        val ciphertext = cipher.doFinal(plaintext)
-        return iv + ciphertext
+    fun standaloneForget(deviceId: String) {
+        store.forgetContact(deviceId, CryptoKeys.DEVICE_ID)
     }
 
-    private fun aesGcmDecrypt(key: ByteArray, data: ByteArray): ByteArray {
-        val iv = data.copyOfRange(0, 12)
-        val ciphertext = data.copyOfRange(12, data.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        return cipher.doFinal(ciphertext)
+    /** Erase every key on the device ("erase all data"). */
+    suspend fun wipeAllKeys() = withContext(Dispatchers.IO) {
+        dao.deleteAllSessions()
+        dao.deleteAllIdentities()
+        kv.deleteAll()
+        db.contactDao().deleteAll()
     }
+
+    private companion object {
+        const val TAG = "CryptoManager"
+    }
+}
+
+/** Thin wrapper so the crypto layer never mixes Android and JVM base64 flavours. */
+internal object Base64Codec {
+    fun encode(bytes: ByteArray): String =
+        android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+
+    fun decode(text: String): ByteArray =
+        android.util.Base64.decode(text, android.util.Base64.NO_WRAP)
 }
