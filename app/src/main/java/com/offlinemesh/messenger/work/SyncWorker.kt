@@ -11,9 +11,9 @@ import com.offlinemesh.messenger.MessengerApp
 import java.util.concurrent.TimeUnit
 
 /**
- * Periodic housekeeping: expires stale store-and-forward packets and retries anything that is
- * still waiting for a peer to come into range. This is a purely local operation - the app has no
- * network stack at all.
+ * Periodic housekeeping for both transports: expires stale store-and-forward packets, retries
+ * mesh messages that are still waiting for a peer to come into range and flushes the online
+ * outbox. The mesh part is purely local; the online part only runs when the user is signed in.
  */
 class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
 
@@ -21,6 +21,10 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
         val app = applicationContext as MessengerApp
         return try {
             app.chats.retryPending()
+            if (app.online.isSignedIn && app.online.networkAvailable) {
+                runCatching { app.online.drainOutbox() }
+                runCatching { app.online.backfillAll() }
+            }
             Result.success()
         } catch (e: Exception) {
             Log.w(TAG, "Sync pass failed", e)

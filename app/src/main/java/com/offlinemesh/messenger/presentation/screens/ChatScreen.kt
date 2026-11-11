@@ -12,7 +12,9 @@ import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +41,8 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,6 +86,9 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
         .collectAsStateWithLifecycle(initialValue = emptyList<MessageEntity>())
 
     var draft by remember { mutableStateOf("") }
+    var actionTarget by remember { mutableStateOf<MessageEntity?>(null) }
+    var editing by remember { mutableStateOf<MessageEntity?>(null) }
+    var replyTarget by remember { mutableStateOf<MessageEntity?>(null) }
     var recording by remember { mutableStateOf(false) }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordStart by remember { mutableStateOf(0L) }
@@ -90,7 +97,21 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
 
     val listState = rememberLazyListState()
 
+    val typing by vm.typing.collectAsStateWithLifecycle()
+    val typingPeers = typing[conversationId].orEmpty()
+
     LaunchedEffect(conversationId) { vm.markRead(conversationId) }
+    LaunchedEffect(conversationId, conversation?.draft) {
+        val stored = conversation?.draft
+        if (!stored.isNullOrEmpty() && draft.isEmpty()) draft = stored
+    }
+    LaunchedEffect(draft) {
+        if (draft.isNotEmpty()) {
+            vm.notifyTyping(conversationId)
+            kotlinx.coroutines.delay(600)
+            vm.setDraft(conversationId, draft)
+        }
+    }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
@@ -214,6 +235,35 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
             )
         },
         bottomBar = {
+            Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
+            replyTarget?.let { target ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "↳ " + target.body.take(60),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { replyTarget = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            }
+            if (typingPeers.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.chat_typing),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 20.dp, top = 4.dp)
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -250,13 +300,15 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                         val text = draft.trim()
                         if (text.isNotEmpty()) {
                             draft = ""
-                            vm.sendText(conversationId, text)
+                            vm.sendText(conversationId, text, replyTarget?.id)
+                            replyTarget = null
                         }
                     },
                     enabled = draft.isNotBlank()
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
                 }
+            }
             }
         }
     ) { padding ->
@@ -294,6 +346,10 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                         MessageBubble(
                             message = message,
                             showSender = conversation?.isGroup == true,
+                            onLongPress = { actionTarget = message },
+                            replyPreview = message.replyToId?.let { id ->
+                                messages.firstOrNull { it.id == id }?.body
+                            },
                             onOpenAttachment = {
                                 val path = message.filePath
                                 if (path != null) {
@@ -308,12 +364,98 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
         }
     }
 
+    val target = actionTarget
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { actionTarget = null },
+            title = { Text(stringResource(R.string.chat_react)) },
+            text = {
+                Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("👍", "❤️", "😂", "😮", "🙏").forEach { emoji ->
+                            TextButton(onClick = {
+                                actionTarget = null
+                                vm.toggleReaction(target.id, emoji)
+                            }) { Text(emoji, style = MaterialTheme.typography.headlineSmall) }
+                        }
+                    }
+                    if (target.outgoing) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_edit)) },
+                            onClick = { editing = target; actionTarget = null },
+                            enabled = target.deletedAt == null && target.remoteId != null
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_delete_for_all)) },
+                            onClick = {
+                                actionTarget = null
+                                vm.deleteForEveryone(target.id)
+                            },
+                            enabled = target.remoteId != null
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_reply)) },
+                        onClick = {
+                            actionTarget = null
+                            replyTarget = target
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_star)) },
+                        onClick = {
+                            actionTarget = null
+                            vm.setStarred(target.id, !target.starred)
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { actionTarget = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    val editTarget = editing
+    if (editTarget != null) {
+        var editedText by remember(editTarget.id) { mutableStateOf(editTarget.body) }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text(stringResource(R.string.chat_edit)) },
+            text = {
+                OutlinedTextField(
+                    value = editedText,
+                    onValueChange = { editedText = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = editedText.isNotBlank(),
+                    onClick = {
+                        vm.editMessage(editTarget.id, editedText)
+                        editing = null
+                    }
+                ) { Text(stringResource(R.string.action_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { editing = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MessageBubble(
     message: MessageEntity,
     showSender: Boolean,
+    replyPreview: String?,
+    onLongPress: () -> Unit,
     onOpenAttachment: () -> Unit
 ) {
     val outgoing = message.outgoing
@@ -329,8 +471,19 @@ private fun MessageBubble(
             modifier = Modifier
                 .widthIn(max = 300.dp)
                 .background(bubbleColor, RoundedCornerShape(18.dp))
+                .combinedClickable(onClick = {}, onLongClick = onLongPress)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
+            if (replyPreview != null) {
+                Text(
+                    text = "↳ " + replyPreview.take(80),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(2.dp))
+            }
             if (showSender && !outgoing) {
                 Text(
                     text = message.senderDeviceId.take(8),
@@ -375,6 +528,16 @@ private fun MessageBubble(
 
                 else -> Text(text = message.body, style = MaterialTheme.typography.bodyLarge)
             }
+            if (message.reactions.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = message.reactions.split(',').joinToString("  ") { part ->
+                        val bits = part.split(':')
+                        if (bits.size == 2) bits[0] + " " + bits[1] else part
+                    },
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             Spacer(Modifier.height(4.dp))
             val statusLabel = when (message.status) {
                 "QUEUED" -> stringResource(R.string.status_queued)
@@ -386,6 +549,7 @@ private fun MessageBubble(
             Text(
                 text = buildString {
                     append(formatTimestamp(message.timestamp))
+                    if (message.editedAt != null) append(" · " + stringResource(R.string.chat_edit))
                     if (outgoing && statusLabel.isNotEmpty()) {
                         append(" · ")
                         append(statusLabel)

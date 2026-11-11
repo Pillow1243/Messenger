@@ -1,0 +1,149 @@
+name: Production release
+
+# Only `v*` tags (or a manual dispatch) can publish a production APK. The build fails loudly
+# when the signing credentials are missing instead of shipping a debug-signed artefact to the
+# production channel, and it refuses to publish anything signed with the public debug key.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v3.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+jobs:
+  release:
+    name: Build signed release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Require production signing credentials
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MESSENGER_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.MESSENGER_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MESSENGER_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.MESSENGER_KEY_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$KEYSTORE_BASE64" ] || missing="$missing MESSENGER_KEYSTORE_BASE64"
+          [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing MESSENGER_KEYSTORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing MESSENGER_KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ] || missing="$missing MESSENGER_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Production signing credentials are missing:$missing"
+            echo "::error::Add them as repository secrets (base64-encoded keystore). No production artefact was published."
+            exit 1
+          fi
+
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MESSENGER_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          ls -l "$RUNNER_TEMP/release.keystore"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.5.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Point Gradle at the preinstalled SDK
+        run: |
+          set -e
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          test -d "$ANDROID_HOME/platforms/android-34" || { echo "::error::Android SDK 34 missing"; exit 1; }
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.0.1
+
+      - name: Unit tests and lint
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --console=plain testDebugUnitTest lintRelease 2>&1 | tee release.log
+
+      - name: Assemble signed release
+        env:
+          MESSENGER_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          MESSENGER_KEYSTORE_PASSWORD: ${{ secrets.MESSENGER_KEYSTORE_PASSWORD }}
+          MESSENGER_KEY_ALIAS: ${{ secrets.MESSENGER_KEY_ALIAS }}
+          MESSENGER_KEY_PASSWORD: ${{ secrets.MESSENGER_KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --console=plain assembleRelease 2>&1 | tee -a release.log
+
+      - name: Verify signing certificate is not the public debug key
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "::error::Signed release APK missing"; exit 1; }
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
+          if grep -qi "CN=Android Debug" certs.txt; then
+            echo "::error::Refusing to publish: APK is signed with the public Android debug key."
+            exit 1
+          fi
+          if grep -q "digest SHA-256" certs.txt; then
+            echo "CERT_SHA256=$(grep 'digest SHA-256' certs.txt | head -1 | awk '{print $NF}')" >> "$GITHUB_ENV"
+          fi
+
+      - name: Placeholder for release notes
+        run: |
+          echo "Signed with certificate SHA-256: ${CERT_SHA256:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checksums and metadata
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp app/build/outputs/apk/release/app-release.apk artifacts/messenger-${{ github.event.inputs.tag || github.ref_name }}.apk
+          cd artifacts
+          sha256sum *.apk > SHA256SUMS.txt
+          {
+            echo "tag=${{ github.event.inputs.tag || github.ref_name }}"
+            echo "commit=${{ github.sha }}"
+            echo "built_at=$(date -u +%FT%TZ)"
+            echo "version_name=$(grep -m1 'versionName =' ../app/build.gradle.kts | tr -d ' \"' | cut -d= -f2)"
+            echo "size_bytes=$(stat -c%s *.apk)"
+            echo "signing_cert_sha256=${CERT_SHA256:-unknown}"
+          } > build-metadata.txt
+          cat build-metadata.txt SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.0.9
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Messenger ${{ github.event.inputs.tag || github.ref_name }}
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            Production build of Messenger, signed with the project release key.
+
+            * commit `${{ github.sha }}`
+            * verify the APK against `SHA256SUMS.txt` before installing
+            * messages are end-to-end encrypted; the servers only ever store ciphertext
+          files: |
+            artifacts/messenger-*.apk
+            artifacts/SHA256SUMS.txt
+            artifacts/build-metadata.txt

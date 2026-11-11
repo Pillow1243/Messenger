@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
@@ -49,7 +50,7 @@ import com.offlinemesh.messenger.presentation.components.SectionCard
 import com.offlinemesh.messenger.presentation.components.ToggleRow
 
 @Composable
-fun SettingsScreen(vm: AppViewModel) {
+fun SettingsScreen(vm: AppViewModel, onOpenAccount: () -> Unit = {}) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val pairingCode by vm.pairingCode.collectAsStateWithLifecycle()
     var editName by remember { mutableStateOf(false) }
@@ -88,6 +89,15 @@ fun SettingsScreen(vm: AppViewModel) {
                     label = stringResource(R.string.my_identity),
                     value = chunkKey(current?.deviceId.orEmpty(), groupSize = 8, maxGroups = 3),
                     mono = true
+                )
+            }
+
+            SectionCard(title = stringResource(R.string.account_title)) {
+                ActionRow(
+                    icon = Icons.Filled.Cloud,
+                    title = stringResource(R.string.account_title),
+                    subtitle = stringResource(R.string.account_status),
+                    onClick = onOpenAccount
                 )
             }
 

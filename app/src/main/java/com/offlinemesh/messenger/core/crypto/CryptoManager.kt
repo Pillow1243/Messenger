@@ -143,7 +143,40 @@ class CryptoManager(
      */
     suspend fun currentBundle(): PreKeyBundle = withContext(Dispatchers.IO) { buildBundle() }
 
-    private fun buildBundle(): PreKeyBundle {
+    /**
+     * The bundle published to the online backend: identity key, signed pre-key and Kyber pre-key.
+     * One-time pre-keys are uploaded separately and handed out by the server one at a time, so
+     * building this must not consume a pre-key locally.
+     */
+    suspend fun publishedBundle(): PreKeyBundleJson = withContext(Dispatchers.IO) {
+        PreKeyBundleJson.fromBundle(buildBundle(consumePreKey = false), includeOneTimePreKey = false)
+    }
+
+    /** Public halves of the local one-time pre-key pool, for upload. */
+    suspend fun preKeyPublics(): List<BundleKey> = withContext(Dispatchers.IO) {
+        dao.preKeyIds().sorted().mapNotNull { id ->
+            runCatching { store.loadPreKey(id) }.getOrNull()?.let { record ->
+                BundleKey(id = id, public = Base64Codec.encode(record.keyPair.publicKey.serialize()))
+            }
+        }
+    }
+
+    suspend fun oneTimePreKeyCount(): Int = withContext(Dispatchers.IO) { dao.preKeyCount() }
+
+    /** Establishes a session from a bundle fetched over HTTPS instead of a mesh HELLO. */
+    suspend fun processBundleJson(deviceId: String, bundle: PreKeyBundleJson) =
+        withContext(Dispatchers.IO) {
+            val address = SignalProtocolAddress(deviceId, CryptoKeys.DEVICE_ID)
+            try {
+                SessionBuilder(store, address).process(bundle.toPreKeyBundle())
+            } catch (e: UntrustedIdentityException) {
+                throw IdentityChangedException(deviceId)
+            } catch (e: Exception) {
+                throw CryptoException("Could not establish a session with $deviceId", e)
+            }
+        }
+
+    private fun buildBundle(consumePreKey: Boolean = true): PreKeyBundle {
         val identity = store.getIdentityKeyPair()
         val signedId = kv.get(CryptoKeys.SIGNED_PRE_KEY_ID)?.toIntOrNull()
             ?: createSignedPreKey(identity)
@@ -151,7 +184,7 @@ class CryptoManager(
         val kyberId = kv.get(CryptoKeys.KYBER_PRE_KEY_ID)?.toIntOrNull()
             ?: createKyberPreKey(identity)
         val kyber = store.loadKyberPreKey(kyberId)
-        val preKey = pickPreKey()
+        val preKey = if (consumePreKey) pickPreKey() else null
 
         return PreKeyBundle(
             store.getLocalRegistrationId(),

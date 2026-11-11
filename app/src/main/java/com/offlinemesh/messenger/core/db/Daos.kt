@@ -34,6 +34,36 @@ interface ConversationDao {
 
     @Query("SELECT COUNT(*) FROM conversations")
     suspend fun count(): Int
+
+    @Query("SELECT * FROM conversations ORDER BY lastMessageAt DESC")
+    suspend fun getAll(): List<ConversationEntity>
+
+    @Query("SELECT * FROM conversations WHERE onlineId = :onlineId LIMIT 1")
+    suspend fun getByOnlineId(onlineId: String): ConversationEntity?
+
+    @Query("SELECT * FROM conversations WHERE type = 'CHANNEL' ORDER BY lastMessageAt DESC")
+    fun observeChannels(): Flow<List<ConversationEntity>>
+
+    @Query("UPDATE conversations SET onlineId = :onlineId, peerUserId = :peerUserId WHERE id = :id")
+    suspend fun linkOnline(id: String, onlineId: String, peerUserId: String?)
+
+    @Query("UPDATE conversations SET title = :title, memberUserIds = :memberUserIds WHERE id = :id")
+    suspend fun updateMembership(id: String, title: String, memberUserIds: String)
+
+    @Query("UPDATE conversations SET draft = :draft WHERE id = :id")
+    suspend fun saveDraft(id: String, draft: String)
+
+    @Query("UPDATE conversations SET muted = :muted WHERE id = :id")
+    suspend fun setMuted(id: String, muted: Boolean)
+
+    @Query("UPDATE conversations SET pinned = :pinned WHERE id = :id")
+    suspend fun setPinned(id: String, pinned: Boolean)
+
+    @Query("UPDATE conversations SET archived = :archived WHERE id = :id")
+    suspend fun setArchived(id: String, archived: Boolean)
+
+    @Query("SELECT * FROM conversations WHERE title LIKE :pattern OR lastMessagePreview LIKE :pattern ORDER BY lastMessageAt DESC")
+    suspend fun search(pattern: String): List<ConversationEntity>
 }
 
 @Dao
@@ -64,6 +94,52 @@ interface MessageDao {
 
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
     suspend fun countForConversation(conversationId: String): Int
+
+    @Query("SELECT * FROM messages WHERE clientMsgId = :clientMsgId LIMIT 1")
+    suspend fun getByClientMsgId(clientMsgId: String): MessageEntity?
+
+    @Query("SELECT * FROM messages WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun getByRemoteId(remoteId: String): MessageEntity?
+
+    @Query("UPDATE messages SET remoteId = :remoteId, status = :status, error = NULL WHERE id = :id")
+    suspend fun markUploaded(id: String, remoteId: String, status: String)
+
+    @Query("UPDATE messages SET status = :status, error = :error WHERE id = :id")
+    suspend fun markFailed(id: String, status: String, error: String?)
+
+    @Query("UPDATE messages SET deliveredAt = :at, status = CASE WHEN status IN ('QUEUED','SENDING','SENT') THEN 'DELIVERED' ELSE status END WHERE id = :id")
+    suspend fun markDelivered(id: String, at: Long)
+
+    @Query("UPDATE messages SET readAt = :at WHERE id = :id")
+    suspend fun markReadAt(id: String, at: Long)
+
+    @Query("UPDATE messages SET body = :body, editedAt = :editedAt WHERE id = :id")
+    suspend fun editBody(id: String, body: String, editedAt: Long)
+
+    @Query("UPDATE messages SET deletedAt = :at, body = '' WHERE id = :id")
+    suspend fun markDeleted(id: String, at: Long)
+
+    @Query("UPDATE messages SET reactions = :summary WHERE id = :id")
+    suspend fun setReactions(id: String, summary: String)
+
+    @Query("UPDATE messages SET starred = :starred WHERE id = :id")
+    suspend fun setStarred(id: String, starred: Boolean)
+
+    @Query(
+        "SELECT * FROM messages WHERE deletedAt IS NULL AND body LIKE :pattern " +
+            "AND (:conversationId IS NULL OR conversationId = :conversationId) " +
+            "ORDER BY timestamp DESC LIMIT 200"
+    )
+    suspend fun search(pattern: String, conversationId: String?): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE starred = 1 AND deletedAt IS NULL ORDER BY timestamp DESC")
+    fun observeStarred(): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE outgoing = 0 AND status = 'RECEIVED' ORDER BY timestamp ASC LIMIT 1")
+    suspend fun oldestUnread(): MessageEntity?
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND timestamp <= :before ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun page(conversationId: String, before: Long, limit: Int): List<MessageEntity>
 }
 
 @Dao
@@ -97,6 +173,14 @@ interface ContactDao {
 
     @Query("DELETE FROM contacts")
     suspend fun deleteAll()
+
+    @Query(
+        """SELECT * FROM contacts
+           WHERE displayName LIKE :pattern ESCAPE '\\'
+              OR IFNULL(username, '') LIKE :pattern ESCAPE '\\'
+           ORDER BY displayName ASC LIMIT 200"""
+    )
+    suspend fun search(pattern: String): List<ContactEntity>
 }
 
 @Dao
@@ -231,6 +315,15 @@ interface FileTransferDao {
 
     @Query("UPDATE file_transfers SET receivedChunks = :received, status = :status WHERE fileId = :fileId")
     suspend fun updateProgress(fileId: String, received: Int, status: String)
+
+    @Query("UPDATE file_transfers SET status = :status, outputPath = :path WHERE fileId = :fileId")
+    suspend fun complete(fileId: String, status: String, path: String)
+
+    @Query("SELECT * FROM file_transfers WHERE status != 'COMPLETE' ORDER BY createdAt ASC")
+    suspend fun pending(): List<FileTransferEntity>
+
+    @Query("DELETE FROM file_transfers WHERE status = 'COMPLETE' AND createdAt < :before")
+    suspend fun purgeCompleted(before: Long)
 }
 
 @Dao
@@ -246,4 +339,89 @@ interface KeyValueDao {
 
     @Query("DELETE FROM key_values")
     fun deleteAll()
+}
+
+
+@Dao
+interface OutboxDao {
+    @Query("SELECT * FROM online_outbox WHERE nextAttemptAt <= :now ORDER BY createdAt ASC LIMIT :limit")
+    suspend fun due(now: Long, limit: Int): List<OutboxEntity>
+
+    @Query("SELECT * FROM online_outbox ORDER BY createdAt ASC LIMIT 1")
+    suspend fun peek(): OutboxEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entry: OutboxEntity)
+
+    @Query("DELETE FROM online_outbox WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("DELETE FROM online_outbox WHERE messageId = :messageId")
+    suspend fun deleteForMessage(messageId: String)
+
+    @Query("UPDATE online_outbox SET attempts = attempts + 1, nextAttemptAt = :nextAttemptAt, lastError = :error WHERE id = :id")
+    suspend fun bump(id: String, nextAttemptAt: Long, error: String?)
+
+    @Query("SELECT COUNT(*) FROM online_outbox")
+    suspend fun count(): Int
+
+    @Query("SELECT COUNT(*) FROM online_outbox WHERE messageId = :messageId")
+    suspend fun countForMessage(messageId: String): Int
+
+    @Query("DELETE FROM online_outbox")
+    suspend fun clear()
+}
+
+@Dao
+interface SyncStateDao {
+    @Query("SELECT value FROM sync_state WHERE `key` = :key")
+    suspend fun get(key: String): String?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(entry: SyncStateEntity)
+
+    @Query("DELETE FROM sync_state WHERE `key` = :key")
+    suspend fun remove(key: String)
+
+    @Query("DELETE FROM sync_state")
+    suspend fun clear()
+}
+
+@Dao
+interface PeerDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDevices(devices: List<PeerDeviceEntity>)
+
+    @Query("SELECT * FROM peer_devices WHERE userId = :userId AND revoked = 0")
+    suspend fun devicesFor(userId: String): List<PeerDeviceEntity>
+
+    @Query("SELECT * FROM peer_devices WHERE deviceId = :deviceId LIMIT 1")
+    suspend fun deviceByDeviceId(deviceId: String): PeerDeviceEntity?
+
+    @Query("SELECT * FROM peer_devices WHERE revoked = 0")
+    suspend fun allDevices(): List<PeerDeviceEntity>
+
+    @Query("UPDATE peer_devices SET revoked = 1 WHERE id = :id")
+    suspend fun markRevoked(id: String)
+
+    @Query("DELETE FROM peer_devices")
+    suspend fun clearDevices()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertProfile(profile: PeerProfileEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertProfiles(profiles: List<PeerProfileEntity>)
+
+    @Query("SELECT * FROM peer_profiles WHERE userId = :userId")
+    suspend fun profile(userId: String): PeerProfileEntity?
+
+    @Query("SELECT * FROM peer_profiles")
+    suspend fun profiles(): List<PeerProfileEntity>
+
+    @Query("SELECT * FROM peer_profiles WHERE displayName LIKE :pattern OR username LIKE :pattern LIMIT 50")
+    suspend fun searchProfiles(pattern: String): List<PeerProfileEntity>
+
+    @Query("DELETE FROM peer_profiles")
+    suspend fun clearProfiles()
 }

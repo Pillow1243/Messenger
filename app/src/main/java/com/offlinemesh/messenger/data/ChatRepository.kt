@@ -8,6 +8,7 @@ import com.offlinemesh.messenger.core.crypto.DuplicateCiphertextException
 import com.offlinemesh.messenger.core.crypto.IdentityChangedException
 import com.offlinemesh.messenger.core.crypto.NoSessionYetException
 import com.offlinemesh.messenger.core.db.AppDatabase
+import com.offlinemesh.messenger.core.db.ContactEntity
 import com.offlinemesh.messenger.core.db.ConversationEntity
 import com.offlinemesh.messenger.core.db.FileTransferEntity
 import com.offlinemesh.messenger.core.db.MessageEntity
@@ -19,7 +20,12 @@ import com.offlinemesh.messenger.core.mesh.PacketHeader
 import com.offlinemesh.messenger.core.mesh.PacketType
 import com.offlinemesh.messenger.core.mesh.PeerInfo
 import com.offlinemesh.messenger.core.mesh.RoutingPolicy
+import com.offlinemesh.messenger.domain.OnlineState
+import com.offlinemesh.messenger.domain.Transport
+import com.offlinemesh.messenger.domain.TransportContext
+import com.offlinemesh.messenger.domain.TransportSelector
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.yield
 import kotlinx.serialization.Serializable
 import java.io.File
@@ -62,7 +68,8 @@ class ChatRepository(
     private val mesh: MeshManager,
     private val files: FileRepository,
     private val settings: SettingsRepository,
-    private val contacts: ContactRepository
+    private val contacts: ContactRepository,
+    private val online: OnlineSync
 ) : MeshManager.PacketHandler {
 
     private val conversations = db.conversationDao()
@@ -70,6 +77,8 @@ class ChatRepository(
     private val relays = db.relayDao()
     private val transfers = db.fileTransferDao()
     private val json = PacketCodec.json
+
+    @Volatile private var lastTypingSentAt = 0L
 
     // --------------------------------------------------------------- observation
 
@@ -86,9 +95,20 @@ class ChatRepository(
 
     suspend fun conversation(id: String): ConversationEntity? = conversations.getById(id)
 
-    suspend fun markRead(conversationId: String) = conversations.markRead(conversationId)
+    suspend fun markRead(conversationId: String) {
+        conversations.markRead(conversationId)
+        // Online read receipts are best effort: a failure must never block the UI.
+        val conversation = conversations.getById(conversationId) ?: return
+        if (conversation.onlineId == null || !online.isSignedIn) return
+        val latest = messages.latestForConversation(conversationId) ?: return
+        if (!latest.outgoing) online.markRead(conversation, latest)
+    }
 
     suspend fun deleteConversation(conversationId: String) {
+        val conversation = conversations.getById(conversationId)
+        if (conversation?.onlineId != null && online.isSignedIn) {
+            runCatching { online.leaveConversation(conversation) }
+        }
         messages.deleteForConversation(conversationId)
         conversations.deleteById(conversationId)
     }
@@ -149,12 +169,13 @@ class ChatRepository(
 
     // -------------------------------------------------------------------- sending
 
-    suspend fun sendText(conversationId: String, text: String) {
+    suspend fun sendText(conversationId: String, text: String, replyToId: String? = null) {
         val body = text.trim()
         if (body.isEmpty()) return
         val conversation = conversations.getById(conversationId) ?: return
         val msgId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
+        val replyTo = replyToId?.takeIf { messages.getById(it) != null }
         val entity = MessageEntity(
             id = msgId,
             conversationId = conversationId,
@@ -163,11 +184,12 @@ class ChatRepository(
             type = MessageType.TEXT,
             body = body,
             timestamp = now,
-            status = MessageStatus.QUEUED
+            status = MessageStatus.QUEUED,
+            replyToId = replyTo
         )
         messages.upsert(entity)
         conversations.updateLastMessage(conversationId, now, previewOf(body), 0)
-        dispatchText(entity, conversation, replaceQueued = false)
+        deliverMessage(entity, conversation, replaceQueued = false)
     }
 
     suspend fun sendFile(conversationId: String, source: File, displayName: String) {
@@ -225,12 +247,58 @@ class ChatRepository(
         dispatchFile(msgId, conversation, source, "voice.m4a", isVoice = true)
     }
 
-    private suspend fun dispatchText(
+    /**
+     * Delivers one outgoing message over the best available transport(s).
+     *
+     * The order matters: the ciphertext is produced per transport, the message stays queued until
+     * at least one transport accepted it, and the online outbox keeps the retry alive so a
+     * connection drop never loses the message.
+     */
+    private suspend fun deliverMessage(
         message: MessageEntity,
         conversation: ConversationEntity,
         replaceQueued: Boolean
     ) {
+        val linked = ensureOnlineLink(conversation)
+        val transport = transportFor(linked)
+        var handedOff = false
+
+        val wantsOnline = transport == Transport.ONLINE || transport == Transport.BOTH
+        if (wantsOnline && message.type == MessageType.TEXT) {
+            val result = online.deliver(message, linked)
+            if (result.ok) {
+                handedOff = true
+                messages.updateStatus(message.id, MessageStatus.SENT)
+            } else if (result.error == OnlineError.IDENTITY_CHANGED || result.error == OnlineError.BLOCKED) {
+                messages.markFailed(message.id, MessageStatus.FAILED, result.error)
+            } else {
+                online.enqueue(message, linked)
+            }
+        } else if (wantsOnline && message.type != MessageType.TEXT) {
+            // Media over the online transport is not enabled in this build: the file path uploads
+            // encrypted blobs to storage, which is a separate, documented follow-up. Never fake it.
+            messages.markFailed(message.id, MessageStatus.QUEUED, "media_online_unsupported")
+        }
+
+        if (transport != Transport.ONLINE) {
+            handedOff = dispatchMeshText(message, linked, replaceQueued) || handedOff
+        }
+
+        if (handedOff) {
+            messages.updateStatus(message.id, MessageStatus.SENT)
+        } else if (messages.getById(message.id)?.status != MessageStatus.FAILED) {
+            messages.updateStatus(message.id, MessageStatus.QUEUED)
+        }
+    }
+
+    /** Mesh path: encrypt per peer device, queue for store-and-forward, try to hand off now. */
+    private suspend fun dispatchMeshText(
+        message: MessageEntity,
+        conversation: ConversationEntity,
+        replaceQueued: Boolean
+    ): Boolean {
         val targets = targetsOf(conversation)
+        if (targets.isEmpty()) return false
         if (replaceQueued) relays.deleteForMessage(message.id)
         var handedOff = true
         for (target in targets) {
@@ -255,9 +323,35 @@ class ChatRepository(
             )
             if (!handOff(header, body)) handedOff = false
         }
-        messages.updateStatus(
-            message.id,
-            if (handedOff) MessageStatus.SENT else MessageStatus.QUEUED
+        return handedOff
+    }
+
+    /**
+     * Attaches a mesh conversation to its online counterpart the first time an online send is
+     * attempted, so one local row serves both transports.
+     */
+    private suspend fun ensureOnlineLink(conversation: ConversationEntity): ConversationEntity {
+        if (conversation.onlineId != null) return conversation
+        if (!online.isSignedIn) return conversation
+        val peerUserId = conversation.peerUserId
+            ?: contacts.get(peerDeviceIdOf(conversation))?.userId
+            ?: return conversation
+        return online.linkDirectConversation(conversation, peerUserId) ?: conversation
+    }
+
+    private fun peerDeviceIdOf(conversation: ConversationEntity): String =
+        conversation.memberIds.split(',').map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
+
+    private fun transportFor(conversation: ConversationEntity): Transport {
+        val members = conversation.memberIds.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val peerInRange = members.any { mesh.isConnected(it) }
+        return TransportSelector.select(
+            TransportContext(
+                signedIn = online.isSignedIn,
+                networkAvailable = online.networkAvailable,
+                conversationLinkedOnline = conversation.onlineId != null,
+                meshPeerConnected = peerInRange
+            )
         )
     }
 
@@ -601,9 +695,106 @@ class ChatRepository(
         for (message in messages.pendingOutgoing()) {
             if (message.status != MessageStatus.QUEUED) continue
             val conversation = conversations.getById(message.conversationId) ?: continue
-            dispatchText(message, conversation, replaceQueued = true)
+            deliverMessage(message, conversation, replaceQueued = true)
         }
+        runCatching { online.drainOutbox() }
     }
+
+    // ----------------------------------------------------------- hybrid extras
+
+    fun observeOnlineState(): StateFlow<OnlineState> = online.state
+
+    fun observeNetwork(): StateFlow<Boolean> = online.networkFlow()
+
+    fun observeTyping(): StateFlow<Map<String, List<String>>>  = online.typing
+
+    fun typingTimeoutMs(): Long = 8_000L
+
+    fun observeChannels(): Flow<List<ConversationEntity>> = conversations.observeChannels()
+
+    /** Signals "user is typing" to the online peers of this conversation (at most every 5 s). */
+    suspend fun notifyTyping(conversationId: String) {
+        val conversation = conversations.getById(conversationId) ?: return
+        if (conversation.onlineId == null || !online.isSignedIn) return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingSentAt < TYPING_THROTTLE_MS) return
+        lastTypingSentAt = now
+        runCatching { online.notifyTyping(conversation) }
+    }
+
+    suspend fun saveDraft(conversationId: String, text: String) =
+        conversations.saveDraft(conversationId, text)
+
+    /** Adds/removes a reaction. Reactions are an online feature; the mesh protocol has none. */
+    suspend fun toggleReaction(messageId: String, emoji: String) {
+        val message = messages.getById(messageId) ?: return
+        if (message.remoteId == null) return
+        val already = message.reactions.split(',').any { it.startsWith(emoji) }
+        if (already) online.removeReaction(message, emoji) else online.addReaction(message, emoji)
+    }
+
+    suspend fun setStarred(messageId: String, starred: Boolean) =
+        messages.setStarred(messageId, starred)
+
+    suspend fun editMessage(messageId: String, newBody: String): Boolean {
+        val message = messages.getById(messageId) ?: return false
+        if (!message.outgoing || message.deletedAt != null) return false
+        val text = newBody.trim()
+        if (text.isEmpty()) return false
+        messages.editBody(messageId, text, System.currentTimeMillis())
+        val conversation = conversations.getById(message.conversationId)
+        if (conversation?.onlineId != null && message.remoteId != null && online.isSignedIn) {
+            runCatching { online.editMessage(message, conversation) }
+        }
+        return true
+    }
+
+    suspend fun deleteForEveryone(messageId: String): Boolean {
+        val message = messages.getById(messageId) ?: return false
+        if (!message.outgoing) return false
+        messages.markDeleted(messageId, System.currentTimeMillis())
+        val conversation = conversations.getById(message.conversationId)
+        if (conversation?.onlineId != null && message.remoteId != null && online.isSignedIn) {
+            runCatching { online.deleteForEveryone(message, conversation) }
+        }
+        return true
+    }
+
+    suspend fun openChatWithAccount(userId: String): String? = online.openDirectChat(userId)
+
+    suspend fun createOnlineGroup(title: String, memberUserIds: List<String>): String? =
+        online.createGroup(title, memberUserIds)
+
+    suspend fun searchAccounts(query: String): List<RemoteProfile> = online.searchUsers(query)
+
+    suspend fun searchChannels(query: String): List<RemoteChannel> = online.searchChannels(query)
+
+    suspend fun createChannel(title: String, username: String?, isPublic: Boolean): String? =
+        online.createChannel(title, username, isPublic)
+
+    suspend fun joinChannel(onlineId: String, invite: String?): String? = online.joinChannel(onlineId, invite)
+
+    fun observeContactsWithAccounts(): Flow<List<ContactEntity>> = contacts.observeContacts()
+
+    /**
+     * Local search over decrypted content. The server only ever holds ciphertext, so search must
+     * happen on the device - which is also the privacy-preserving answer.
+     */
+    suspend fun search(query: String): LocalSearchResult {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return LocalSearchResult(emptyList(), emptyList(), emptyList())
+        val pattern = "%" + trimmed.replace("%", "\\%").replace("_", "\\_") + "%"
+        val foundMessages = messages.search(pattern, null)
+        val foundConversations = conversations.search(pattern)
+        val foundContacts = contacts.search(pattern)
+        return LocalSearchResult(foundMessages, foundConversations, foundContacts)
+    }
+
+    data class LocalSearchResult(
+        val messages: List<MessageEntity>,
+        val conversations: List<ConversationEntity>,
+        val contacts: List<ContactEntity>
+    )
 
     private fun previewOf(text: String): String =
         text.replace('\n', ' ').take(120)
@@ -612,5 +803,6 @@ class ChatRepository(
         const val TAG = "ChatRepository"
         const val MAX_RELAY_ENTRIES = 600
         const val MAX_FLUSH_PER_RUN = 200
+        const val TYPING_THROTTLE_MS = 5_000L
     }
 }

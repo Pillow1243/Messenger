@@ -103,7 +103,7 @@
     <string name="my_identity">My identity key</string>
     <string name="version_title">Version</string>
     <string name="version_value">%1$s (%2$s)</string>
-    <string name="offline_notice">This app has no internet permission. Nothing you write can leave your device except over local radios.</string>
+    <string name="offline_notice">Messages travel either over local radios to nearby devices or, when you sign in, through the encrypted relay. Either way the server only ever stores ciphertext.</string>
     <string name="about_text">Offline Mesh is a peer-to-peer messenger for places without connectivity: disasters, protests, remote sites and flights. Messages are stored encrypted on your device and forwarded across the mesh until they reach the recipient.</string>
     <string name="clear_all_data">Erase all data</string>
     <string name="clear_all_data_confirm">This deletes every chat, contact and key on this device. It cannot be undone.</string>
@@ -116,4 +116,78 @@
 
     <!-- Errors -->
     <string name="error_unknown">Something went wrong</string>
+
+    <!-- Hybrid / online mode -->
+    <string name="nav_search">Search</string>
+    <string name="nav_channels">Channels</string>
+    <string name="nav_account">Account</string>
+    <string name="mode_online">Online</string>
+    <string name="mode_offline">Mesh</string>
+    <string name="mode_connecting">Connecting</string>
+    <string name="mode_both">Mesh + online</string>
+    <string name="account_title">Account</string>
+    <string name="account_status">Connection</string>
+    <string name="account_connected">Signed in</string>
+    <string name="account_connecting">Connecting…</string>
+    <string name="account_offline">No network — the mesh still works</string>
+    <string name="account_error">Connection problem</string>
+    <string name="account_signed_out">Not signed in — mesh only</string>
+    <string name="account_network_up">Internet available</string>
+    <string name="account_network_down">No internet. Nearby devices remain reachable over the mesh.</string>
+    <string name="account_mesh_note">Offline mesh messaging works with or without an account and never depends on the server.</string>
+    <string name="account_create">Create account</string>
+    <string name="account_sign_in">Sign in</string>
+    <string name="account_email">Email</string>
+    <string name="account_password">Password (min. 8 characters)</string>
+    <string name="account_display_name">Display name</string>
+    <string name="account_have_account">I already have an account</string>
+    <string name="account_no_account">Create a new account</string>
+    <string name="account_devices">Devices</string>
+    <string name="account_no_devices">No other devices are linked yet.</string>
+    <string name="account_session">Session</string>
+    <string name="account_refresh_devices">Refresh device list</string>
+    <string name="account_sign_out">Sign out</string>
+    <string name="account_delete">Delete account</string>
+    <string name="account_delete_body">This removes the account and its server-side data. Messages stored on this device stay where they are.</string>
+
+    <!-- Search -->
+    <string name="search_hint">Search chats, messages, people</string>
+    <string name="search_title">Search everything</string>
+    <string name="search_body">Messages are decrypted on this device only, so search runs locally. Public accounts and channels are looked up on the server.</string>
+    <string name="search_chats">Chats</string>
+    <string name="search_messages">Messages</string>
+    <string name="search_contacts">Contacts</string>
+    <string name="search_accounts">People</string>
+    <string name="search_channels">Channels</string>
+
+    <!-- Channels -->
+    <string name="channels_title">Channels</string>
+    <string name="channels_create">New channel</string>
+    <string name="channels_mine">Subscribed</string>
+    <string name="channels_discover">Discover</string>
+    <string name="channels_search_hint">Search public channels</string>
+    <string name="channels_empty_title">No channels yet</string>
+    <string name="channels_empty_body">Channels you join will appear here. They keep working over the mesh once joined.</string>
+    <string name="channels_discover_empty">Nothing found. Try another name.</string>
+    <string name="channels_no_posts">No posts yet</string>
+    <string name="channels_name">Channel name</string>
+    <string name="channels_username">Public username (optional)</string>
+    <string name="channels_public">Listed publicly</string>
+
+    <!-- Notifications -->
+    <string name="notifications_messages">Messages</string>
+    <string name="notifications_messages_desc">New messages that arrived while the app was in the background. Nothing is pushed through a server.</string>
+
+    <!-- Chat extras -->
+    <string name="chat_typing">typing…</string>
+    <string name="chat_react">React</string>
+    <string name="chat_edit">Edit</string>
+    <string name="chat_delete_for_all">Delete for everyone</string>
+    <string name="chat_reply">Reply</string>
+    <string name="chat_star">Star</string>
+    <string name="chat_saved">Saved messages</string>
+    <string name="action_create">Create</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_save">Save</string>
 </resources>

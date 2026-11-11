@@ -10,7 +10,13 @@ import com.offlinemesh.messenger.core.db.ConversationEntity
 import com.offlinemesh.messenger.core.db.MessageEntity
 import com.offlinemesh.messenger.core.mesh.PeerInfo
 import com.offlinemesh.messenger.data.AppSettings
+import com.offlinemesh.messenger.data.ChatRepository
+import com.offlinemesh.messenger.data.OnlineError
 import com.offlinemesh.messenger.data.PairingCodec
+import com.offlinemesh.messenger.data.RemoteChannel
+import com.offlinemesh.messenger.data.RemoteDevice
+import com.offlinemesh.messenger.data.RemoteProfile
+import com.offlinemesh.messenger.domain.OnlineState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -123,10 +129,11 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
 
     // ------------------------------------------------------------------------ chats
 
-    fun sendText(conversationId: String, text: String) = viewModelScope.launch {
-        runCatching { app.chats.sendText(conversationId, text) }
-            .onFailure { _error.value = "error_unknown" }
-    }
+    fun sendText(conversationId: String, text: String, replyToId: String? = null) =
+        viewModelScope.launch {
+            runCatching { app.chats.sendText(conversationId, text, replyToId) }
+                .onFailure { _error.value = "error_unknown" }
+        }
 
     fun sendFile(conversationId: String, file: File, displayName: String) = viewModelScope.launch {
         _busy.value = true
@@ -215,6 +222,152 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
     }
 
     fun contact(deviceId: String): ContactEntity? = contacts.value.firstOrNull { it.deviceId == deviceId }
+
+    // ------------------------------------------------------------------ online mode
+
+    val onlineState: StateFlow<OnlineState> = app.online.state
+    val networkAvailable: StateFlow<Boolean> = app.online.networkFlow()
+    val onlineError: StateFlow<String?> = app.online.lastError
+    val typing: StateFlow<Map<String, List<String>>> = app.chats.observeTyping()
+    val channels: StateFlow<List<ConversationEntity>> =
+        app.chats.observeChannels()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _devices = MutableStateFlow<List<RemoteDevice>>(emptyList())
+    val devices: StateFlow<List<RemoteDevice>> = _devices.asStateFlow()
+
+    private val _localResults = MutableStateFlow(
+        ChatRepository.LocalSearchResult(emptyList(), emptyList(), emptyList())
+    )
+    val localResults: StateFlow<ChatRepository.LocalSearchResult> = _localResults.asStateFlow()
+
+    private val _accountResults = MutableStateFlow<List<RemoteProfile>>(emptyList())
+    val accountResults: StateFlow<List<RemoteProfile>> = _accountResults.asStateFlow()
+
+    private val _channelResults = MutableStateFlow<List<RemoteChannel>>(emptyList())
+    val channelResults: StateFlow<List<RemoteChannel>> = _channelResults.asStateFlow()
+
+    private val _searching = MutableStateFlow(false)
+    val searching: StateFlow<Boolean> = _searching.asStateFlow()
+
+    fun signIn(email: String, password: String, onDone: (Boolean) -> Unit) = viewModelScope.launch {
+        _busy.value = true
+        val result = app.online.signIn(email, password)
+        if (result.isSuccess) {
+            runCatching { app.online.backfillAll() }
+            runCatching { refreshDevices() }
+        } else {
+            _error.value = result.exceptionOrNull()?.message ?: "sign_in_failed"
+        }
+        _busy.value = false
+        onDone(result.isSuccess)
+    }
+
+    fun signUp(email: String, password: String, displayName: String, onDone: (Boolean) -> Unit) =
+        viewModelScope.launch {
+            _busy.value = true
+            val result = app.online.signUp(email, password, displayName)
+            if (result.isSuccess) runCatching { refreshDevices() }
+            else _error.value = result.exceptionOrNull()?.message ?: "sign_up_failed"
+            _busy.value = false
+            onDone(result.isSuccess)
+        }
+
+    fun signOut() = viewModelScope.launch {
+        app.online.signOut()
+        _devices.value = emptyList()
+    }
+
+    fun deleteAccount(onDone: (Boolean) -> Unit) = viewModelScope.launch {
+        val result = app.online.deleteAccount()
+        if (result.isFailure) _error.value = result.exceptionOrNull()?.message ?: "error_unknown"
+        onDone(result.isSuccess)
+    }
+
+    fun updateOnlineProfile(displayName: String, username: String) = viewModelScope.launch {
+        runCatching { app.online.updateProfile(displayName, username.ifBlank { null }) }
+            .onFailure { _error.value = OnlineError.UNKNOWN }
+    }
+
+    fun refreshDevices() = viewModelScope.launch {
+        runCatching { app.online.myDevices() }.onSuccess { _devices.value = it }
+    }
+
+    fun revokeDevice(rowId: String) = viewModelScope.launch {
+        runCatching { app.online.revokeDevice(rowId) }.onFailure { _error.value = "error_unknown" }
+        refreshDevices()
+    }
+
+    /** On-device search over decrypted data plus server search over public accounts/channels. */
+    fun search(query: String) = viewModelScope.launch {
+        _searching.value = true
+        _localResults.value = app.chats.search(query)
+        if (query.trim().length >= 2 && app.online.isSignedIn) {
+            runCatching { app.chats.searchAccounts(query.trim()) }
+                .onSuccess { _accountResults.value = it }
+            runCatching { app.chats.searchChannels(query.trim()) }
+                .onSuccess { _channelResults.value = it }
+        } else {
+            _accountResults.value = emptyList()
+            _channelResults.value = emptyList()
+        }
+        _searching.value = false
+    }
+
+    fun clearSearch() {
+        _localResults.value = ChatRepository.LocalSearchResult(emptyList(), emptyList(), emptyList())
+        _accountResults.value = emptyList()
+        _channelResults.value = emptyList()
+    }
+
+    fun openAccountChat(userId: String, onReady: (String) -> Unit) = viewModelScope.launch {
+        val id = runCatching { app.chats.openChatWithAccount(userId) }.getOrNull()
+        if (id == null) _error.value = OnlineError.UNKNOWN else onReady(id)
+    }
+
+    fun createOnlineGroup(title: String, memberIds: List<String>, onCreated: (String) -> Unit) =
+        viewModelScope.launch {
+            val id = app.chats.createOnlineGroup(title, memberIds)
+            if (id == null) _error.value = "error_unknown" else onCreated(id)
+        }
+
+    fun createChannel(title: String, username: String, isPublic: Boolean, onCreated: (String) -> Unit) =
+        viewModelScope.launch {
+            val id = app.chats.createChannel(title, username.ifBlank { null }, isPublic)
+            if (id == null) _error.value = "error_unknown" else onCreated(id)
+        }
+
+    fun joinChannel(onlineId: String, onJoined: (String) -> Unit) = viewModelScope.launch {
+        val id = app.chats.joinChannel(onlineId, null)
+        if (id == null) _error.value = "error_unknown" else onJoined(id)
+    }
+
+    fun setDraft(conversationId: String, text: String) = viewModelScope.launch {
+        runCatching { app.chats.saveDraft(conversationId, text) }
+    }
+
+    fun notifyTyping(conversationId: String) = viewModelScope.launch {
+        runCatching { app.chats.notifyTyping(conversationId) }
+    }
+
+    fun toggleReaction(messageId: String, emoji: String) = viewModelScope.launch {
+        runCatching { app.chats.toggleReaction(messageId, emoji) }
+            .onFailure { _error.value = "error_unknown" }
+    }
+
+    fun editMessage(messageId: String, body: String) = viewModelScope.launch {
+        if (!app.chats.editMessage(messageId, body)) _error.value = "error_unknown"
+    }
+
+    fun deleteForEveryone(messageId: String) = viewModelScope.launch {
+        if (!app.chats.deleteForEveryone(messageId)) _error.value = "error_unknown"
+    }
+
+    fun setStarred(messageId: String, starred: Boolean) = viewModelScope.launch {
+        app.chats.setStarred(messageId, starred)
+    }
+
+    fun starredMessages(): Flow<List<MessageEntity>> = app.database.messageDao().observeStarred()
 
     // ------------------------------------------------------------------------ misc
 

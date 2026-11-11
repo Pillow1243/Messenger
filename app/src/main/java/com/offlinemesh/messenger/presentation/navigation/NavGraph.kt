@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,12 +31,15 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.offlinemesh.messenger.R
 import com.offlinemesh.messenger.presentation.AppViewModel
+import com.offlinemesh.messenger.presentation.screens.AccountScreen
+import com.offlinemesh.messenger.presentation.screens.ChannelsScreen
 import com.offlinemesh.messenger.presentation.screens.ChatScreen
 import com.offlinemesh.messenger.presentation.screens.ChatsScreen
 import com.offlinemesh.messenger.presentation.screens.ContactDetailScreen
 import com.offlinemesh.messenger.presentation.screens.ContactsScreen
 import com.offlinemesh.messenger.presentation.screens.NearbyScreen
 import com.offlinemesh.messenger.presentation.screens.OnboardingScreen
+import com.offlinemesh.messenger.presentation.screens.SearchScreen
 import com.offlinemesh.messenger.presentation.screens.SettingsScreen
 import java.util.Base64
 
@@ -47,6 +51,9 @@ object Routes {
     const val CONTACTS = "contacts"
     const val CONTACT = "contact/{deviceId}"
     const val SETTINGS = "settings"
+    const val SEARCH = "search"
+    const val CHANNELS = "channels"
+    const val ACCOUNT = "account"
     const val ARG_CONVERSATION = "conversationId"
     const val ARG_DEVICE = "deviceId"
 
@@ -74,7 +81,11 @@ private val bottomItems = listOf(
 )
 
 @Composable
-fun NavGraph(vm: AppViewModel) {
+fun NavGraph(
+    vm: AppViewModel,
+    startConversation: String? = null,
+    onStartConsumed: () -> Unit = {}
+) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snapshot = settings
@@ -84,6 +95,14 @@ fun NavGraph(vm: AppViewModel) {
             CircularProgressIndicator()
         }
         return
+    }
+
+    // A notification tap carries the conversation id; open it once the graph is ready.
+    LaunchedEffect(startConversation, snapshot.onboarded) {
+        if (startConversation != null && snapshot.onboarded) {
+            navController.navigate(Routes.chat(startConversation))
+            onStartConsumed()
+        }
     }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -126,8 +145,31 @@ fun NavGraph(vm: AppViewModel) {
                 ChatsScreen(
                     vm = vm,
                     onOpenChat = { id -> navController.navigate(Routes.chat(id)) },
-                    onOpenNearby = { navigateToTab(navController, Routes.NEARBY) }
+                    onOpenNearby = { navigateToTab(navController, Routes.NEARBY) },
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
+                    onOpenChannels = { navController.navigate(Routes.CHANNELS) },
+                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) }
                 )
+            }
+
+            composable(Routes.SEARCH) {
+                SearchScreen(
+                    vm = vm,
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { id -> navController.navigate(Routes.chat(id)) }
+                )
+            }
+
+            composable(Routes.CHANNELS) {
+                ChannelsScreen(
+                    vm = vm,
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { id -> navController.navigate(Routes.chat(id)) }
+                )
+            }
+
+            composable(Routes.ACCOUNT) {
+                AccountScreen(vm = vm, onBack = { navController.popBackStack() })
             }
 
             composable(
@@ -174,7 +216,10 @@ fun NavGraph(vm: AppViewModel) {
             }
 
             composable(Routes.SETTINGS) {
-                SettingsScreen(vm = vm)
+                SettingsScreen(
+                    vm = vm,
+                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) }
+                )
             }
         }
     }
