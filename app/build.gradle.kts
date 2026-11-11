@@ -79,8 +79,11 @@ android {
             // (.dylib/.dll) that Android can never load. Excluding them removes ~270 MB.
             excludes += setOf(
                 "**/libsignal_jni_testing.so",
+                "**/libsignal_jni_testing_*.so",
                 "**/*.dylib",
-                "**/*.dll"
+                "**/*.dll",
+                "*.dylib",
+                "*.dll"
             )
         }
         resources {
