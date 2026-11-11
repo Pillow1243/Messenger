@@ -80,14 +80,28 @@ android {
             excludes += setOf(
                 "**/libsignal_jni_testing.so",
                 "**/libsignal_jni_testing_*.so",
+                "libsignal_jni_testing_*",
                 "**/*.dylib",
                 "**/*.dll",
                 "*.dylib",
-                "*.dll"
+                "*.dll",
+                "**/libsignal_jni_testing_*"
             )
         }
         resources {
+            // libsignal's AAR drops its desktop JNI libraries at the archive root, where the
+            // jniLibs filter above cannot see them; filter them out as plain entries too.
             excludes += setOf(
+                "libsignal_jni_testing_amd64.dylib",
+                "libsignal_jni_testing_aarch64.dylib",
+                "libsignal_jni_amd64.dylib",
+                "libsignal_jni_aarch64.dylib",
+                "signal_jni_testing_amd64.dll",
+                "signal_jni_testing_aarch64.dll",
+                "signal_jni_amd64.dll",
+                "signal_jni_aarch64.dll",
+                "*.dylib",
+                "*.dll",
                 "META-INF/DEPENDENCIES",
                 "META-INF/LICENSE",
                 "META-INF/LICENSE.txt",
