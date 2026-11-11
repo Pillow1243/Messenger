@@ -18,8 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -49,16 +54,23 @@ import com.offlinemesh.messenger.core.db.ContactEntity
 import com.offlinemesh.messenger.presentation.AppViewModel
 import com.offlinemesh.messenger.presentation.components.Avatar
 import com.offlinemesh.messenger.presentation.components.EmptyState
+import com.offlinemesh.messenger.domain.OnlineState
 import com.offlinemesh.messenger.presentation.formatTimestamp
 
 @Composable
 fun ChatsScreen(
     vm: AppViewModel,
     onOpenChat: (String) -> Unit,
-    onOpenNearby: () -> Unit
+    onOpenNearby: () -> Unit,
+    onOpenSearch: () -> Unit = {},
+    onOpenChannels: () -> Unit = {},
+    onOpenAccount: () -> Unit = {}
 ) {
     val conversations by vm.conversations.collectAsStateWithLifecycle()
     val contacts by vm.contacts.collectAsStateWithLifecycle()
+    val onlineState by vm.onlineState.collectAsStateWithLifecycle()
+    val network by vm.networkAvailable.collectAsStateWithLifecycle()
+    val meshRunning by vm.meshRunning.collectAsStateWithLifecycle()
     var showGroupDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -71,8 +83,17 @@ fun ChatsScreen(
                     )
                 },
                 actions = {
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.nav_search))
+                    }
+                    IconButton(onClick = onOpenChannels) {
+                        Icon(Icons.Filled.Campaign, contentDescription = stringResource(R.string.nav_channels))
+                    }
                     IconButton(onClick = onOpenNearby) {
                         Icon(Icons.Filled.ChatBubbleOutline, contentDescription = stringResource(R.string.nav_discover))
+                    }
+                    IconButton(onClick = onOpenAccount) {
+                        Icon(Icons.Filled.Person, contentDescription = stringResource(R.string.nav_account))
                     }
                 }
             )
@@ -92,15 +113,24 @@ fun ChatsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (conversations.isEmpty()) {
-                EmptyState(
-                    icon = Icons.Filled.ChatBubbleOutline,
-                    title = stringResource(R.string.no_chats_title),
-                    body = stringResource(R.string.no_chats_hint),
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                item {
+                    ModeBanner(
+                        onlineState = onlineState,
+                        network = network,
+                        meshRunning = meshRunning,
+                        onOpenAccount = onOpenAccount
+                    )
+                }
+                if (conversations.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Filled.ChatBubbleOutline,
+                            title = stringResource(R.string.no_chats_title),
+                            body = stringResource(R.string.no_chats_hint)
+                        )
+                    }
+                } else {
                     items(conversations, key = { it.id }) { conversation ->
                         ConversationRow(conversation = conversation, onClick = { onOpenChat(conversation.id) })
                     }
@@ -242,4 +272,52 @@ private fun NewGroupDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
+}
+
+/**
+ * Honest transport indicator: it shows what is actually usable right now instead of a decorative
+ * dot. Tapping it opens the account screen, where the mesh/online split is explained.
+ */
+@Composable
+private fun ModeBanner(
+    onlineState: OnlineState,
+    network: Boolean,
+    meshRunning: Boolean,
+    onOpenAccount: () -> Unit
+) {
+    val chipLabel = when {
+        onlineState is OnlineState.Connected && meshRunning -> stringResource(R.string.mode_both)
+        onlineState is OnlineState.Connected -> stringResource(R.string.mode_online)
+        onlineState is OnlineState.Connecting -> stringResource(R.string.mode_connecting)
+        else -> stringResource(R.string.mode_offline)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        AssistChip(
+            onClick = onOpenAccount,
+            label = { Text(chipLabel) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Filled.Wifi,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        )
+        if (!network) {
+            Text(
+                text = stringResource(R.string.account_network_down),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
 }

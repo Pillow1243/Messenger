@@ -31,6 +31,9 @@ class ContactRepository(
 
     suspend fun all(): List<ContactEntity> = dao.getAll()
 
+    /** Local name/username search; ciphertext on the server means search can only be on-device. */
+    suspend fun search(pattern: String): List<ContactEntity> = dao.search(pattern)
+
     suspend fun displayName(deviceId: String): String =
         dao.getByDeviceId(deviceId)?.displayName ?: deviceId.take(8)
 

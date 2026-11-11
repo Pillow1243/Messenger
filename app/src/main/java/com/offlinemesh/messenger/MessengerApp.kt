@@ -11,6 +11,7 @@ import com.offlinemesh.messenger.core.mesh.RadioController
 import com.offlinemesh.messenger.data.ChatRepository
 import com.offlinemesh.messenger.data.ContactRepository
 import com.offlinemesh.messenger.data.FileRepository
+import com.offlinemesh.messenger.data.OnlineSync
 import com.offlinemesh.messenger.data.SettingsRepository
 import com.offlinemesh.messenger.service.MeshService
 import com.offlinemesh.messenger.work.SyncWorker
@@ -38,6 +39,8 @@ class MessengerApp : Application() {
         private set
     lateinit var radios: RadioController
         private set
+    lateinit var online: OnlineSync
+        private set
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -49,9 +52,13 @@ class MessengerApp : Application() {
         files = FileRepository(this)
         contacts = ContactRepository(database, crypto, settings)
         mesh = MeshManager(this, settings, crypto)
-        chats = ChatRepository(database, crypto, mesh, files, settings, contacts)
+        online = OnlineSync(this, database, crypto, settings)
+        chats = ChatRepository(database, crypto, mesh, files, settings, contacts, online)
         radios = RadioController(mesh, settings)
         mesh.setHandler(chats)
+        // Starts the connectivity watcher and, if a session is stored, the online transport.
+        // The mesh is started independently below and never depends on this.
+        runCatching { online.start() }.onFailure { Log.w(TAG, "Online start failed", it) }
 
         appScope.launch {
             runCatching {
@@ -62,6 +69,9 @@ class MessengerApp : Application() {
                     if (snapshot.meshEnabled && snapshot.radiosUsable) startMesh() else stopMesh()
                 }
                 chats.retryPending()
+                if (snapshot.onboarded && online.isSignedIn && online.networkAvailable) {
+                    runCatching { online.backfillAll() }
+                }
             }.onFailure { Log.e(TAG, "Startup failed", it) }
         }
         SyncWorker.schedule(this)

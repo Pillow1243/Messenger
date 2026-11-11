@@ -103,7 +103,7 @@
     <string name="my_identity">کلید هویت من</string>
     <string name="version_title">نسخه</string>
     <string name="version_value">%1$s (%2$s)</string>
-    <string name="offline_notice">این برنامه اجازهٔ اینترنت ندارد. هیچ نوشتهٔ شما جز از طریق رادیوی محلی از دستگاه خارج نمی‌شود.</string>
+    <string name="offline_notice">پیام‌ها یا از طریق رادیوی محلی به دستگاه‌های نزدیک می‌روند و یا پس از ورود به حساب، از مسیر رمزنگاری‌شده ارسال می‌شوند. در هر دو حالت سرور فقط دادهٔ رمزشده را نگه می‌دارد.</string>
     <string name="about_text">مش آفلاین یک پیام‌رسان همتا‌به‌همتا برای جاهایی است که اتصال نیست: بحران‌ها، اعتراض‌ها، سایت‌های دورافتاده و پروازها. پیام‌ها به‌صورت رمزنگاری‌شده روی دستگاه شما می‌مانند و در مش ارسال می‌شوند تا به گیرنده برسند.</string>
     <string name="clear_all_data">پاک‌کردن همهٔ داده‌ها</string>
     <string name="clear_all_data_confirm">همهٔ گفتگوها، مخاطبین و کلیدهای روی این دستگاه پاک می‌شود. این کار بازگشت‌پذیر نیست.</string>
@@ -116,4 +116,73 @@
 
     <!-- Errors -->
     <string name="error_unknown">خطایی رخ داد</string>
+
+    <!-- Hybrid / online mode -->
+    <string name="nav_search">جستجو</string>
+    <string name="nav_channels">کانال‌ها</string>
+    <string name="nav_account">حساب</string>
+    <string name="mode_online">آنلاین</string>
+    <string name="mode_offline">مش</string>
+    <string name="mode_connecting">در حال اتصال</string>
+    <string name="mode_both">مش + آنلاین</string>
+    <string name="account_title">حساب</string>
+    <string name="account_status">اتصال</string>
+    <string name="account_connected">وارد شده‌اید</string>
+    <string name="account_connecting">در حال اتصال…</string>
+    <string name="account_offline">اینترنت قطع است — مش همچنان کار می‌کند</string>
+    <string name="account_error">مشکل در اتصال</string>
+    <string name="account_signed_out">بدون حساب — فقط مش</string>
+    <string name="account_network_up">اینترنت در دسترس است</string>
+    <string name="account_network_down">اینترنت نیست. دستگاه‌های نزدیک از طریق مش قابل دسترس‌اند.</string>
+    <string name="account_mesh_note">پیام‌رسانی مش، با یا بدون حساب، کار می‌کند و هرگز به سرور وابسته نیست.</string>
+    <string name="account_create">ساخت حساب</string>
+    <string name="account_sign_in">ورود</string>
+    <string name="account_email">ایمیل</string>
+    <string name="account_password">گذرواژه (حداقل ۸ نویسه)</string>
+    <string name="account_display_name">نام نمایشی</string>
+    <string name="account_have_account">از قبل حساب دارم</string>
+    <string name="account_no_account">ساخت حساب جدید</string>
+    <string name="account_devices">دستگاه‌ها</string>
+    <string name="account_no_devices">هنوز دستگاه دیگری متصل نشده است.</string>
+    <string name="account_session">نشست</string>
+    <string name="account_refresh_devices">به‌روزرسانی فهرست دستگاه‌ها</string>
+    <string name="account_sign_out">خروج</string>
+    <string name="account_delete">حذف حساب</string>
+    <string name="account_delete_body">حساب و داده‌های سمت سرور حذف می‌شود. پیام‌های ذخیره‌شده روی این دستگاه باقی می‌مانند.</string>
+
+    <!-- Search -->
+    <string name="search_hint">جستجوی گفتگو، پیام و افراد</string>
+    <string name="search_title">جستجوی همه‌چیز</string>
+    <string name="search_body">پیام‌ها فقط روی همین دستگاه رمزگشایی می‌شوند، پس جستجو محلی است. حساب‌ها و کانال‌های عمومی از سرور جستجو می‌شوند.</string>
+    <string name="search_chats">گفتگوها</string>
+    <string name="search_messages">پیام‌ها</string>
+    <string name="search_contacts">مخاطبان</string>
+    <string name="search_accounts">افراد</string>
+    <string name="search_channels">کانال‌ها</string>
+
+    <!-- Channels -->
+    <string name="channels_title">کانال‌ها</string>
+    <string name="channels_create">کانال جدید</string>
+    <string name="channels_mine">دنبال‌شده</string>
+    <string name="channels_discover">کشف</string>
+    <string name="channels_search_hint">جستجوی کانال‌های عمومی</string>
+    <string name="channels_empty_title">هنوز کانالی نیست</string>
+    <string name="channels_empty_body">کانال‌هایی که عضو شوید اینجا نمایش داده می‌شوند و از طریق مش هم کار می‌کنند.</string>
+    <string name="channels_discover_empty">چیزی پیدا نشد. نام دیگری را امتحان کنید.</string>
+    <string name="channels_no_posts">هنوز نوشته‌ای نیست</string>
+    <string name="channels_name">نام کانال</string>
+    <string name="channels_username">نام کاربری عمومی (اختیاری)</string>
+    <string name="channels_public">در فهرست عمومی نمایش داده شود</string>
+
+    <!-- Chat extras -->
+    <string name="chat_typing">در حال نوشتن…</string>
+    <string name="chat_react">واکنش</string>
+    <string name="chat_edit">ویرایش</string>
+    <string name="chat_delete_for_all">حذف برای همه</string>
+    <string name="chat_star">ستاره</string>
+    <string name="chat_saved">پیام‌های ذخیره‌شده</string>
+    <string name="action_create">ساخت</string>
+    <string name="action_cancel">انصراف</string>
+    <string name="action_delete">حذف</string>
+    <string name="action_save">ذخیره</string>
 </resources>
