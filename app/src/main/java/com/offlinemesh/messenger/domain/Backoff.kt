@@ -12,7 +12,8 @@ object Backoff {
 
     /** Exponential 5 s → 5 min, capped, and never negative for a corrupt attempt counter. */
     fun delayMillis(attempts: Int): Long {
-        val safe = attempts.coerceIn(0, 6)
+        // 0..10 keeps the shift inside Long range while still reaching the cap.
+        val safe = attempts.coerceIn(0, 10)
         return (BASE_MS shl safe).coerceAtMost(MAX_MS)
     }
 
