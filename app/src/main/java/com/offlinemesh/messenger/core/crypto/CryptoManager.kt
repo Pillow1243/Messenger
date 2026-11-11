@@ -5,7 +5,6 @@ import com.offlinemesh.messenger.core.db.AppDatabase
 import com.offlinemesh.messenger.core.db.KeyValueEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.signal.libsignal.protocol.CiphertextMessage
 import org.signal.libsignal.protocol.DuplicateMessageException
 import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
@@ -17,6 +16,7 @@ import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.fingerprint.NumericFingerprintGenerator
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
+import org.signal.libsignal.protocol.message.CiphertextMessage
 import org.signal.libsignal.protocol.message.PreKeySignalMessage
 import org.signal.libsignal.protocol.message.SignalMessage
 import org.signal.libsignal.protocol.state.KyberPreKeyRecord

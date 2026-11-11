@@ -70,10 +70,12 @@ class MessengerApp : Application() {
     /** Starts advertising/discovery and (optionally) the foreground service. */
     fun startMesh() {
         radios.start()
-        appScope.launch { mesh.start() }
-        if (settings.settings.first().backgroundService) {
-            runCatching { MeshService.start(this) }
-                .onFailure { Log.w(TAG, "Could not start foreground service", it) }
+        appScope.launch {
+            mesh.start()
+            if (settings.settings.first().backgroundService) {
+                runCatching { MeshService.start(this@MessengerApp) }
+                    .onFailure { Log.w(TAG, "Could not start foreground service", it) }
+            }
         }
     }
 

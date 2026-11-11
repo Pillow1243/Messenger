@@ -310,7 +310,7 @@ class MeshManager(
     }
 
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
-        override fun onEndpointDiscovered(endpointId: String, info: DiscoveredEndpointInfo) {
+        override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
             discovered[endpointId] = info.endpointName
             if (peers.containsKey(endpointId)) return
             val nextAttempt = retryState[endpointId] ?: 0L
@@ -319,7 +319,7 @@ class MeshManager(
             requestConnection(endpointId, info.endpointName)
         }
 
-        override fun onEndpointUndiscovered(endpointId: String, endpointName: String) {
+        override fun onEndpointLost(endpointId: String) {
             discovered.remove(endpointId)
         }
     }
