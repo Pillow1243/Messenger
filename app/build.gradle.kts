@@ -20,6 +20,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
 
+        // libsignal ships a large Rust JNI library per ABI. Only the two ABIs that real
+        // Android 8+ phones use are packaged; x86/x86_64 are emulator-only and would
+        // otherwise roughly double the download.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+
         // No network at all: the app never talks to a server.
         buildConfigField("boolean", "OFFLINE_ONLY", "true")
         buildConfigField("String", "BUILD_CHANNEL", "\"demo\"")
@@ -64,6 +71,11 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // Compress the native libraries inside the APK instead of storing them raw.
+            // They are extracted on first launch, which keeps the download noticeably smaller.
+            useLegacyPackaging = true
+        }
         resources {
             excludes += setOf(
                 "META-INF/DEPENDENCIES",

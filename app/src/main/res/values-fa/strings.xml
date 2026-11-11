@@ -29,30 +29,19 @@
     <string name="create">ساختن</string>
     <string name="cancel">انصراف</string>
     <string name="save">ذخیره</string>
-    <string name="delete">حذف</string>
-    <string name="delete_chat">حذف گفتگو</string>
-    <string name="delete_chat_confirm">این گفتگو و همهٔ پیام‌های آن روی این دستگاه حذف شود؟</string>
-    <string name="group_chat">گفتگوی گروهی</string>
-    <string name="members_count">%1$d عضو</string>
-    <string name="you">شما</string>
-
     <!-- Chat screen -->
     <string name="message_hint">پیام</string>
     <string name="send">ارسال</string>
     <string name="attach_file">پیوست فایل</string>
     <string name="record_voice">پیام صوتی</string>
-    <string name="stop_recording">پایان</string>
     <string name="encrypted_banner">پیام‌ها سرتاسری رمزنگاری می‌شوند</string>
     <string name="status_queued">در صف</string>
-    <string name="status_sending">در حال ارسال</string>
     <string name="status_sent">ارسال شد</string>
     <string name="status_delivered">تحویل شد</string>
     <string name="status_failed">تحویل نشد</string>
-    <string name="retry">تلاش دوباره</string>
     <string name="file_received">فایل دریافت شد</string>
     <string name="file_too_large">فایل بیش از حد بزرگ است (حداکثر ۵۰ مگابایت)</string>
     <string name="voice_note">پیام صوتی</string>
-    <string name="open_file">باز کردن</string>
     <string name="empty_chat">هنوز پیامی نیست. سلام کنید!</string>
     <string name="attachment_pick_failed">خواندن این فایل ممکن نشد</string>
 
@@ -64,23 +53,15 @@
     <string name="nearby_devices">دستگاه‌های نزدیک</string>
     <string name="scanning">در حال جست‌وجو…</string>
     <string name="no_devices">هنوز دستگاهی پیدا نشده. این صفحه را باز نگه دارید — جست‌وجو خودکار تکرار می‌شود.</string>
-    <string name="connect">اتصال</string>
     <string name="connected">متصل</string>
-    <string name="disconnect">قطع اتصال</string>
     <string name="my_code">کد من</string>
-    <string name="show_my_code">اشتراک کد مخاطب من</string>
     <string name="my_code_title">کد مخاطب من</string>
     <string name="my_code_subtitle">دیگران با اسکن این کد شما را اضافه و کلید هویت شما را تأیید می‌کنند. این کد فقط دادهٔ عمومی دارد.</string>
     <string name="scan_code">اسکن کد</string>
     <string name="add_contact">افزودن مخاطب</string>
-    <string name="contact_added">مخاطب اضافه شد</string>
-    <string name="invalid_code">این کد، کد مخاطب معتبری نیست</string>
     <string name="copy_code">کپی کد</string>
-    <string name="code_copied">کد کپی شد</string>
     <string name="paste_code_title">کد مخاطب را جای‌گذاری کنید</string>
     <string name="paste_code_hint">متن کدی که دریافت کرده‌اید را اینجا بگذارید</string>
-    <string name="pair_code_imported">مخاطب تأیید و اضافه شد</string>
-
     <!-- Contacts -->
     <string name="contacts_title">مخاطبین</string>
     <string name="no_contacts">هنوز مخاطبی ندارید</string>
@@ -112,13 +93,9 @@
     <string name="connectors_battery">صرفه‌جویی باتری</string>
     <string name="connectors_battery_hint">جست‌وجوی کندتر و بیدارباش کمتر</string>
     <string name="connectors_radios_note">در اندروید، انتخاب رادیو برای هر اتصال با Nearby انجام می‌شود؛ این کلیدها رادیوهای در حال استفاده را نشان می‌دهند و اجازه می‌دهند سرعت را با باتری معاوضه کنید.</string>
-    <string name="foreground_service">اجرا در پس‌زمینه</string>
-    <string name="foreground_service_hint">نمایش یک اعلان دائمی تا مش هنگام بسته‌بودن برنامه هم کار کند</string>
-    <string name="theme">پوسته</string>
     <string name="theme_system">سیستم</string>
     <string name="theme_light">روشن</string>
     <string name="theme_dark">تاریک</string>
-    <string name="language">زبان</string>
     <string name="encryption_title">رمزنگاری</string>
     <string name="encryption_desc">پروتکل سیگنال — توافق کلید X3DH/PQXDH همراه با جغجغهٔ دوگانه. هر پیام کلید تازه می‌گیرد.</string>
     <string name="database_title">ذخیره‌سازی محلی</string>
@@ -132,21 +109,11 @@
     <string name="clear_all_data_confirm">همهٔ گفتگوها، مخاطبین و کلیدهای روی این دستگاه پاک می‌شود. این کار بازگشت‌پذیر نیست.</string>
 
     <!-- Permissions -->
-    <string name="permissions_title">دسترسی‌ها</string>
-    <string name="permissions_hint">در اندروید ۱۱ و پایین‌تر، برای جست‌وجوی دستگاه‌های بلوتوثی به دسترسی مکان نیاز است؛ افزون بر آن دوربین برای کد QR و میکروفن برای پیام صوتی.</string>
-    <string name="grant_permissions">اعطای دسترسی‌ها</string>
-    <string name="permissions_missing">برخی دسترسی‌ها داده نشده — ممکن است جست‌وجو کار نکند.</string>
-
     <!-- Service -->
     <string name="mesh_notification_channel">سرویس مش</string>
     <string name="mesh_notification_title">مش فعال است</string>
     <string name="mesh_notification_text">در جست‌وجوی همتاهای نزدیک</string>
 
     <!-- Errors -->
-    <string name="error_bluetooth_off">بلوتوث خاموش است. برای استفاده از مش آن را روشن کنید.</string>
-    <string name="error_no_session">در انتظار ورود مخاطب به محدوده برای تبادل کلید.</string>
-    <string name="error_decrypt">رمزگشایی این پیام ممکن نشد</string>
     <string name="error_unknown">خطایی رخ داد</string>
-    <string name="error_location_off">سرویس مکان را روشن کنید تا اندروید بتواند دستگاه‌های نزدیک را بیابد.</string>
-    <string name="error_play_services">برای اتصال‌های نزدیک، سرویس‌های گوگل پلی لازم است و روی این دستگاه نصب نیست.</string>
 </resources>

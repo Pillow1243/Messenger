@@ -79,31 +79,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # Compiler errors are mirrored into a commit comment so they stay readable through the
-      # REST API (the Actions log endpoint is not always reachable from every environment).
-      - name: Extract the interesting part of the log
-        if: failure()
+      # Build size + compiler errors are mirrored into a commit comment so they stay readable
+      # through the REST API (the Actions log endpoint is not always reachable).
+      - name: Summarize build
+        if: always()
         run: |
-          grep -aE "^(e|w): |^> Task .* FAILED|error:|What went wrong|Caused by:|Execution failed|Could not (resolve|find|download)|FAILURE" build.log | head -200 > diag.txt || true
-          echo "--- failing unit tests ---" >> diag.txt
-          grep -h -a -B 1 -A 4 "<failure" app/build/test-results/testDebugUnitTest/*.xml 2>/dev/null | head -150 >> diag.txt || true
-          if [ ! -s diag.txt ]; then tail -c 20000 build.log > diag.txt; fi
-          head -120 diag.txt
+          {
+            echo "--- APK size ---"
+            ls -l artifacts/*.apk 2>/dev/null || echo "(no apk produced)"
+            for f in artifacts/*.apk; do
+              [ -f "$f" ] || continue
+              echo "== largest entries in $(basename "$f") =="
+              unzip -l "$f" 2>/dev/null | awk 'NF>=4 && $1 ~ /^[0-9]+$/ {print $1"  "$4}' | sort -rn | head -10
+            done
+            echo "--- gradle errors ---"
+            grep -aE "^(e|w): |^> Task .* FAILED|error:|What went wrong|Caused by:|Execution failed|FAILURE" build.log 2>/dev/null | head -150 || true
+            echo "--- failing unit tests ---"
+            grep -h -a -B 1 -A 4 "<failure" app/build/test-results/testDebugUnitTest/*.xml 2>/dev/null | head -120 || true
+          } > diag.txt
+          head -40 diag.txt
 
       - name: Mirror diagnostics into a commit comment
-        if: failure()
+        if: always()
         uses: actions/github-script@v7
+        env:
+          JOB_STATUS: ${{ job.status }}
         with:
           script: |
             const fs = require('fs');
             let diag = '';
             try { diag = fs.readFileSync('diag.txt', 'utf8'); } catch (e) { diag = '(no diag.txt)'; }
             const fence = String.fromCharCode(96).repeat(3);
+            const title = (process.env.JOB_STATUS || 'finished');
             await github.rest.repos.createCommitComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               commit_sha: context.sha,
-              body: '### CI diagnostics\n\n' + fence + '\n' + diag + '\n' + fence
+              body: '### CI build report (' + title + ')\n\n' + fence + '\n' + diag + '\n' + fence
             });
 
       - name: Publish demo-signed APKs as a GitHub release
