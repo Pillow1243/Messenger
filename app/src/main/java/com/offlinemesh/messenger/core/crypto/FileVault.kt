@@ -97,4 +97,7 @@ class FileVault {
         FileInputStream(source).use { fileIn ->
             decryptingStream(fileIn).use { it.readBytes() }
         }
+
+    /** Opens a streaming decrypted [InputStream] over a sealed [source] file. */
+    fun openRead(source: File): InputStream = decryptingStream(FileInputStream(source))
 }

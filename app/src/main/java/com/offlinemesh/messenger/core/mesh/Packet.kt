@@ -148,6 +148,7 @@ object RoutingPolicy {
 
     const val DEFAULT_TTL = 7
     const val MAX_TTL = 12
+    const val PACKET_TTL_MS = 24 * 60 * 60 * 1000L
 
     /** A packet is useless once its expiry has passed or its ttl ran out. */
     fun isUsable(header: PacketHeader, now: Long): Boolean =

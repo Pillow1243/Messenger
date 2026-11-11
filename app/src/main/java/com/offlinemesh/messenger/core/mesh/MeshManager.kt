@@ -123,12 +123,14 @@ class MeshManager(
 
     /** Loads identity and prepares the HELLO material. Safe to call repeatedly. */
     suspend fun refreshIdentity() = kotlinx.coroutines.withContext(Dispatchers.IO) {
-        if (!seenPreloaded && seenPacketDao != null) {
-            runCatching {
-                val now = System.currentTimeMillis()
-                seenPacketDao.deleteOlderThan(now - RoutingPolicy.PACKET_TTL_MS)
-                seenPacketDao.recentPacketIds(4096).forEach { id -> seen.markSeen(id, now) }
-                seenPreloaded = true
+        if (!seenPreloaded) {
+            seenPacketDao?.let { dao ->
+                runCatching {
+                    val now = System.currentTimeMillis()
+                    dao.deleteOlderThan(now - RoutingPolicy.PACKET_TTL_MS)
+                    dao.recentPacketIds(4096).forEach { id -> seen.markSeen(id, now) }
+                    seenPreloaded = true
+                }
             }
         }
         myDeviceId = settings.deviceId()
@@ -367,12 +369,12 @@ class MeshManager(
         if (!RoutingPolicy.isUsable(header, now)) return
         if (RoutingPolicy.isFromSelf(header, myDeviceId)) return
         if (!seen.markSeen(header.packetId, now)) return
-        if (seenPacketDao != null) {
-            val inserted = runCatching {
-                seenPacketDao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
-            }.getOrDefault(1L)
-            if (inserted == -1L) return
-        }
+        val duplicateInDb = seenPacketDao?.let { dao ->
+            runCatching {
+                dao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
+            }.getOrDefault(1L) == -1L
+        } ?: false
+        if (duplicateInDb) return
 
         when (header.type) {
             PacketType.HELLO -> handleHello(endpointId, packet.body)

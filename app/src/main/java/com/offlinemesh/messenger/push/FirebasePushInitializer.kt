@@ -20,6 +20,8 @@ enum class PushProviderStatus {
     ERROR
 }
 
+typealias PushRegistrationStatus = PushProviderStatus
+
 /**
  * Programmatic Firebase Cloud Messaging lifecycle helper.
  *
