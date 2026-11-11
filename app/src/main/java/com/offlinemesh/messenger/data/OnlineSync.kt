@@ -43,6 +43,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 
 /** Result of one online delivery attempt. */
 data class OnlineSendResult(val ok: Boolean, val remoteId: String?, val error: String?) {
@@ -643,7 +644,7 @@ class OnlineSync(
             incoming.filter { getByRemoteId(it.id) == null }
         }
         if (envelopeFetched.isNotEmpty()) {
-            val envelopes = api.envelopesFor(envelopeFetched.map { it.id }, userId)
+            val envelopes = api.envelopesFor(envelopeFetched.map { it.id }, uid)
             envelopes.forEach { envelope ->
                 runCatching { ingestEnvelope(envelope.messageId, envelope.ciphertext) }
                     .onFailure { Log.w(TAG, "Could not ingest ${envelope.messageId}", it) }

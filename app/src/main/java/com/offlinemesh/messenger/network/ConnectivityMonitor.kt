@@ -41,16 +41,18 @@ class ConnectivityMonitor(context: Context) {
     private var registered = false
 
     fun start() {
-        if (registered || manager == null) return
-        runCatching { manager.registerDefaultNetworkCallback(callback) }
+        val cm = manager ?: return
+        if (registered) return
+        runCatching { cm.registerDefaultNetworkCallback(callback) }
             .onSuccess { registered = true }
             .onFailure { Log.w(TAG, "Could not register network callback", it) }
         _online.value = currentlyOnline()
     }
 
     fun stop() {
-        if (!registered || manager == null) return
-        runCatching { manager.unregisterNetworkCallback(callback) }
+        val cm = manager ?: return
+        if (!registered) return
+        runCatching { cm.unregisterNetworkCallback(callback) }
         registered = false
     }
 
