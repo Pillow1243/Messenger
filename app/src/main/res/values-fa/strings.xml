@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">پیام‌رسان مش آفلاین</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">پیام‌رسان مش آفلاین</string>
+    <string name="onboarding_subtitle">بدون اینترنت چت کنید. پیام‌های شما دستگاه‌به‌دستگاه از طریق بلوتوث و وای‌فای دایرکت جابه‌جا می‌شوند و به‌صورت سرتاسری رمزنگاری شده‌اند.</string>
+    <string name="display_name_label">نام نمایشی</string>
+    <string name="display_name_hint">مثلاً علی</string>
+    <string name="continue_button">ادامه</string>
+    <string name="choose_language">زبان</string>
+    <string name="language_english">English</string>
+    <string name="language_persian">فارسی</string>
+
+    <!-- Navigation -->
+    <string name="chats">گفتگوها</string>
+    <string name="contacts">مخاطبین</string>
+    <string name="discover">کشف</string>
+    <string name="settings">تنظیمات</string>
+    <string name="search_chats">جستجوی گفتگوها</string>
+    <string name="no_chats_yet">هنوز گفتگویی نیست</string>
+    <string name="no_chats_subtitle">کشف را شروع کنید تا دستگاه‌های نزدیک را پیدا کنید یا با کد QR مخاطب اضافه کنید.</string>
+    <string name="start_discovery">شروع کشف</string>
+    <string name="new_group">گروه جدید</string>
+    <string name="group_name_hint">نام گروه</string>
+    <string name="create">ایجاد</string>
+    <string name="cancel">لغو</string>
+    <string name="save">ذخیره</string>
+
+    <!-- Chat -->
+    <string name="type_message">پیام بنویسید…</string>
+    <string name="send">ارسال</string>
+    <string name="attach_file">پیوست فایل</string>
+    <string name="record_voice">ضبط پیام صوتی</string>
+    <string name="stop_recording">توقف ضبط</string>
+    <string name="encrypted_badge">رمزنگاری سرتاسری</string>
+    <string name="queued">در صف</string>
+    <string name="sent">ارسال شد</string>
+    <string name="delivered">تحویل داده شد</string>
+    <string name="read">خوانده شد</string>
+    <string name="failed">ناموفق</string>
+    <string name="retry">تلاش مجدد</string>
+    <string name="file_received">فایل دریافت شد</string>
+    <string name="file_sending">در حال ارسال فایل…</string>
+    <string name="file_too_large">فایل بزرگ است (حداکثر ۵۰ مگابایت)</string>
+    <string name="voice_note">پیام صوتی</string>
+    <string name="open_file">باز کردن فایل</string>
+    <string name="members">عضو</string>
+    <string name="group_chat">گفتگوی گروهی</string>
+
+    <!-- Discovery -->
+    <string name="mesh_status_on">شبکه مش روشن است</string>
+    <string name="mesh_status_off">شبکه مش خاموش است</string>
+    <string name="peers_connected">همتا متصل است</string>
+    <string name="nearby_devices">دستگاه‌های نزدیک</string>
+    <string name="scanning">در حال جستجو…</string>
+    <string name="no_devices_found">هنوز دستگاهی پیدا نشد. این صفحه را باز نگه دارید و از دیگران هم بخواهید کشف را باز کنند.</string>
+    <string name="connect">اتصال</string>
+    <string name="connected">متصل</string>
+    <string name="disconnect">قطع اتصال</string>
+    <string name="online">آنلاین</string>
+    <string name="offline">آفلاین</string>
+    <string name="scan_qr">اسکن کد QR</string>
+    <string name="show_my_qr">نمایش کد QR من</string>
+    <string name="add_contact">افزودن مخاطب</string>
+    <string name="contact_added">مخاطب اضافه شد</string>
+    <string name="invalid_qr">کد QR نامعتبر است</string>
+    <string name="my_qr_title">کد QR هویت من</string>
+    <string name="my_qr_subtitle">این کد را به اشتراک بگذارید تا دیگران شما را اضافه کنند. فقط کلید عمومی هویت شما در آن است.</string>
+
+    <!-- Settings -->
+    <string name="profile">پروفایل</string>
+    <string name="mesh_radios">رادیوهای مش</string>
+    <string name="appearance">ظاهر</string>
+    <string name="security">امنیت</string>
+    <string name="updates">به‌روزرسانی‌ها</string>
+    <string name="about">درباره</string>
+    <string name="ble_toggle">بلوتوث کم‌مصرف (BLE)</string>
+    <string name="ble_subtitle">استفاده از BLE برای کشف و لینک‌های کوتاه‌برد</string>
+    <string name="wifi_direct_toggle">وای‌فای دایرکت</string>
+    <string name="wifi_direct_subtitle">استفاده از وای‌فای دایرکت برای لینک‌های پرسرعت</string>
+    <string name="battery_mode">حالت باتری</string>
+    <string name="battery_subtitle">کنترل می‌کند رادیوها هر چند وقت یک‌بار تبلیغ و کشف کنند</string>
+    <string name="battery_performance">عملکرد</string>
+    <string name="battery_balanced">متعادل</string>
+    <string name="battery_saver">صرفه‌جویی</string>
+    <string name="theme">پوسته</string>
+    <string name="theme_system">سیستم</string>
+    <string name="theme_light">روشن</string>
+    <string name="theme_dark">تیره</string>
+    <string name="language">زبان</string>
+    <string name="identity_key">کلید هویت</string>
+    <string name="fingerprint">اثر انگشت ایمنی</string>
+    <string name="encryption_status">رمزنگاری</string>
+    <string name="encryption_on">پروتکل سیگنال (X3DH + Double Ratchet) با پشتیبان AES-256-GCM</string>
+    <string name="database_status">پایگاه داده محلی</string>
+    <string name="database_encrypted">رمزنگاری‌شده با SQLCipher (AES-256). کلید در Android Keystore ذخیره می‌شود.</string>
+    <string name="check_updates">بررسی به‌روزرسانی</string>
+    <string name="checking">در حال بررسی…</string>
+    <string name="up_to_date">به‌روز هستید</string>
+    <string name="update_available">به‌روزرسانی موجود است</string>
+    <string name="download_update">دانلود</string>
+    <string name="update_offline">بررسی ممکن نشد (آفلاین)</string>
+    <string name="version">نسخه</string>
+    <string name="about_text">پیام‌رسان مش آفلاین یک برنامه پیام‌رسانی کاملاً آفلاین همتا‌به‌همتاست. هیچ داده‌ای از پیام‌ها هرگز از دستگاه شما خارج نمی‌شود، مگر از طریق رادیوهای محلی به همتایان نزدیک.</string>
+    <string name="clear_all_data">پاک کردن همه داده‌ها</string>
+    <string name="clear_all_data_confirm">این کار همه گفتگوها، مخاطبین و کلیدهای این دستگاه را حذف می‌کند. ادامه می‌دهید؟</string>
+
+    <!-- Permissions -->
+    <string name="permissions_title">مجوزهای لازم</string>
+    <string name="permissions_message">پیام‌رسانی مش به بلوتوث، مکان (برای اسکن بلوتوث در اندروید قدیمی)، دستگاه‌های نزدیک، میکروفون برای پیام صوتی و دوربین برای اسکن QR نیاز دارد.</string>
+    <string name="grant_permissions">اعطای مجوز</string>
+
+    <string name="mesh_notification_channel">شبکه مش</string>
+    <string name="mesh_notification_text">شبکه مش فعال است</string>
+</resources>

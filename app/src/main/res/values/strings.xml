@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Offline Mesh Messenger</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">Offline Mesh Messenger</string>
+    <string name="onboarding_subtitle">Chat without internet. Your messages travel device-to-device over Bluetooth and Wi-Fi Direct, encrypted end-to-end.</string>
+    <string name="display_name_label">Display name</string>
+    <string name="display_name_hint">e.g. Alex</string>
+    <string name="continue_button">Continue</string>
+    <string name="choose_language">Language</string>
+    <string name="language_english">English</string>
+    <string name="language_persian">فارسی</string>
+
+    <!-- Navigation -->
+    <string name="chats">Chats</string>
+    <string name="contacts">Contacts</string>
+    <string name="discover">Discover</string>
+    <string name="settings">Settings</string>
+    <string name="search_chats">Search chats</string>
+    <string name="no_chats_yet">No chats yet</string>
+    <string name="no_chats_subtitle">Start discovery to find nearby devices, or add a contact with a QR code.</string>
+    <string name="start_discovery">Start discovery</string>
+    <string name="new_group">New group</string>
+    <string name="group_name_hint">Group name</string>
+    <string name="create">Create</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+
+    <!-- Chat -->
+    <string name="type_message">Type a message…</string>
+    <string name="send">Send</string>
+    <string name="attach_file">Attach file</string>
+    <string name="record_voice">Record voice note</string>
+    <string name="stop_recording">Stop recording</string>
+    <string name="encrypted_badge">End-to-end encrypted</string>
+    <string name="queued">Queued</string>
+    <string name="sent">Sent</string>
+    <string name="delivered">Delivered</string>
+    <string name="read">Read</string>
+    <string name="failed">Failed</string>
+    <string name="retry">Retry</string>
+    <string name="file_received">File received</string>
+    <string name="file_sending">Sending file…</string>
+    <string name="file_too_large">File is too large (max 50 MB)</string>
+    <string name="voice_note">Voice note</string>
+    <string name="open_file">Open file</string>
+    <string name="members">members</string>
+    <string name="group_chat">Group chat</string>
+
+    <!-- Discovery -->
+    <string name="mesh_status_on">Mesh network is ON</string>
+    <string name="mesh_status_off">Mesh network is OFF</string>
+    <string name="peers_connected">peers connected</string>
+    <string name="nearby_devices">Nearby devices</string>
+    <string name="scanning">Scanning…</string>
+    <string name="no_devices_found">No devices found yet. Keep this screen open and ask others to open discovery too.</string>
+    <string name="connect">Connect</string>
+    <string name="connected">Connected</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="online">Online</string>
+    <string name="offline">Offline</string>
+    <string name="scan_qr">Scan QR code</string>
+    <string name="show_my_qr">Show my QR code</string>
+    <string name="add_contact">Add contact</string>
+    <string name="contact_added">Contact added</string>
+    <string name="invalid_qr">Invalid QR code</string>
+    <string name="my_qr_title">My identity QR code</string>
+    <string name="my_qr_subtitle">Share this code so others can add you. It contains only your public identity key.</string>
+
+    <!-- Settings -->
+    <string name="profile">Profile</string>
+    <string name="mesh_radios">Mesh radios</string>
+    <string name="appearance">Appearance</string>
+    <string name="security">Security</string>
+    <string name="updates">Updates</string>
+    <string name="about">About</string>
+    <string name="ble_toggle">Bluetooth Low Energy</string>
+    <string name="ble_subtitle">Use BLE for discovery and short-range links</string>
+    <string name="wifi_direct_toggle">Wi-Fi Direct</string>
+    <string name="wifi_direct_subtitle">Use Wi-Fi Direct for high-throughput links</string>
+    <string name="battery_mode">Battery mode</string>
+    <string name="battery_subtitle">Controls how often radios advertise and discover</string>
+    <string name="battery_performance">Performance</string>
+    <string name="battery_balanced">Balanced</string>
+    <string name="battery_saver">Saver</string>
+    <string name="theme">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="language">Language</string>
+    <string name="identity_key">Identity key</string>
+    <string name="fingerprint">Safety fingerprint</string>
+    <string name="encryption_status">Encryption</string>
+    <string name="encryption_on">Signal Protocol (X3DH + Double Ratchet) with AES-256-GCM fallback</string>
+    <string name="database_status">Local database</string>
+    <string name="database_encrypted">Encrypted with SQLCipher (AES-256). Key stored in Android Keystore.</string>
+    <string name="check_updates">Check for updates</string>
+    <string name="checking">Checking…</string>
+    <string name="up_to_date">You are up to date</string>
+    <string name="update_available">Update available</string>
+    <string name="download_update">Download</string>
+    <string name="update_offline">Could not check (offline)</string>
+    <string name="version">Version</string>
+    <string name="about_text">Offline Mesh Messenger is a fully offline peer-to-peer messaging app. No message data ever leaves your device except over local radios to nearby peers.</string>
+    <string name="clear_all_data">Clear all data</string>
+    <string name="clear_all_data_confirm">This will delete all chats, contacts and keys on this device. Continue?</string>
+
+    <!-- Permissions -->
+    <string name="permissions_title">Permissions needed</string>
+    <string name="permissions_message">Mesh messaging needs Bluetooth, location (for Bluetooth scanning on older Android), nearby devices, microphone for voice notes, and camera for QR scanning.</string>
+    <string name="grant_permissions">Grant permissions</string>
+
+    <string name="mesh_notification_channel">Mesh network</string>
+    <string name="mesh_notification_text">Mesh network active</string>
+</resources>
