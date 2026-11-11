@@ -79,7 +79,7 @@ object OnlineError {
  * backfill runs on every (re)connection, so a lost socket cannot lose a message.
  */
 class OnlineSync(
-    context: Context,
+    private val context: Context,
     private val db: AppDatabase,
     private val crypto: CryptoManager,
     private val settings: SettingsRepository
@@ -504,13 +504,13 @@ class OnlineSync(
         val list = ArrayList<OutgoingEnvelope>(devices.size)
         for (device in devices) {
             if (!crypto.hasSession(device.deviceId)) {
-                crypto.processBundleJson(device.deviceId, api.claimBundle(device.rowId))
+                crypto.processBundleJson(device.deviceId, api.claimBundle(device.id))
             }
             val ciphertext = crypto.encrypt(device.deviceId, plaintext)
             list += OutgoingEnvelope(
                 messageId = "",
                 recipientUserId = device.userId,
-                recipientDeviceRowId = device.rowId,
+                recipientDeviceRowId = device.id,
                 senderDeviceRowId = senderRow,
                 cipherType = ciphertext.firstOrNull()?.toInt() ?: 3,
                 ciphertextBase64 = Base64.encodeToString(ciphertext, Base64.NO_WRAP)
@@ -630,13 +630,14 @@ class OnlineSync(
         }
     }
 
-    suspend fun backfill(conversation: ConversationEntity, userId: String = myUserId ?: return) {
+    suspend fun backfill(conversation: ConversationEntity, userId: String? = null) {
+        val uid = userId ?: myUserId ?: return
         val onlineId = conversation.onlineId ?: return
         val key = "cursor:$onlineId"
         val since = syncDao.get(key)?.toLongOrNull() ?: 0L
         val remoteMessages = api.messagesSince(onlineId, since)
         if (remoteMessages.isEmpty()) return
-        val incoming = remoteMessages.filter { it.senderId != userId }
+        val incoming = remoteMessages.filter { it.senderId != uid }
         val envelopeFetched = messagesDao.run {
             // Collect the ones we still need to decrypt.
             incoming.filter { getByRemoteId(it.id) == null }
@@ -705,7 +706,7 @@ class OnlineSync(
         if (existing != null) {
             conversationsDao.linkOnline(existing.id, onlineId, peerUserId)
             conversationsDao.updateMembership(existing.id, title, members.joinedToString())
-            if (peerUserId != null) linkContact(peerUserId)
+            if (peerUserId != null) cacheProfile(peerUserId)
             return existing.id
         }
         val localId = "online:$onlineId"
@@ -724,7 +725,7 @@ class OnlineSync(
                 memberUserIds = members.joinedToString()
             )
         )
-        if (peerUserId != null) linkContact(peerUserId)
+        if (peerUserId != null) cacheProfile(peerUserId)
         return localId
     }
 
@@ -1017,6 +1018,6 @@ class OnlineSync(
         fun parseIso(value: String): Long =
             runCatching { java.time.Instant.parse(value).toEpochMilli() }.getOrDefault(System.currentTimeMillis())
 
-        private fun List<String>.joinedToString(): String = joinToString(",")
+        private fun Collection<String>.joinedToString(): String = joinToString(",")
     }
 }

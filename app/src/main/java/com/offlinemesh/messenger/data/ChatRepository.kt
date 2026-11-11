@@ -781,7 +781,7 @@ class ChatRepository(
     suspend fun search(query: String): LocalSearchResult {
         val trimmed = query.trim()
         if (trimmed.length < 2) return LocalSearchResult(emptyList(), emptyList(), emptyList())
-        val pattern = "%" + trimmed.replace("%", "\%").replace("_", "\_") + "%"
+        val pattern = "%" + trimmed.replace("%", "\\%").replace("_", "\\_") + "%"
         val foundMessages = messages.search(pattern, null)
         val foundConversations = conversations.search(pattern)
         val foundContacts = contacts.search(pattern)
