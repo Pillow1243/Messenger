@@ -28,8 +28,9 @@ Play Protect prompt (the signing key is the well‑known debug key, so the warni
 > Android considers a valid update of this one. For real use, generate your own keystore and wire it
 > into `signingConfigs` — see [Signing](#signing).
 
-The APK bundles only `arm64-v8a` and `armeabi-v7a` native libraries (no emulator ABIs), which keeps
-the download to roughly a third of a universal build.
+The APK bundles only `arm64-v8a` and `armeabi-v7a` native libraries (no emulator ABIs) and drops the
+desktop/test JNI libraries that libsignal's AAR also ships, which brings the download down from
+~680 MB to **~48 MB** for the signed release build.
 
 ---
 
