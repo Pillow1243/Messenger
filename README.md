@@ -1,101 +1,72 @@
 # Offline Mesh Messenger
 
-A peer‑to‑peer messenger that needs **no internet, no server and no account**. Devices find each
-other over Bluetooth LE / Wi‑Fi Direct using Google **Nearby Connections**, pair out‑of‑band with a
-QR code, and exchange **end‑to‑end encrypted** messages (official Signal Protocol) that are stored
-**encrypted at rest** (SQLCipher).
+A hybrid messenger: **the mesh works with no internet, no server and no account**, and signing in
+adds an online transport for people who are not within radio range. Both transports share one
+encrypted database, one set of libsignal sessions and one chat list, so a conversation does not care
+which path delivered a message.
 
 * **Package:** `com.offlinemesh.messenger`
 * **Min Android:** 8.0 (API 26) · **Target/compile:** API 34
-* **No `INTERNET` permission** — the app cannot reach the network even in principle
-* **Languages:** English + فارسی (full RTL layout)
+* **Languages:** English + فارسی (full RTL)
+* **Offline first:** BLE / Wi‑Fi Direct (Nearby Connections), QR pairing, store‑and‑forward relay
+* **Online:** email accounts, realtime delivery, per‑device encryption, multi‑device, channels
 
----
-
-## Download
-
-CI publishes a demo build on every push:
-
-| File | What it is |
-| --- | --- |
-| [`offlinemesh-demo-signed.apk`](https://github.com/Pillow1243/Messenger/releases/download/demo-latest/offlinemesh-demo-signed.apk) | Release variant, signed with the **public Android debug key** |
-| [`offlinemesh-debug.apk`](https://github.com/Pillow1243/Messenger/releases/download/demo-latest/offlinemesh-debug.apk) | Debug variant (`…messenger.debug` package, can sit next to the release build) |
-
-Install: allow *"install unknown apps"* for your browser/file manager, open the APK, accept the
-Play Protect prompt (the signing key is the well‑known debug key, so the warning is expected).
-
-> **Demo signing only.** The debug keystore is public, so anybody can produce a package that
-> Android considers a valid update of this one. For real use, generate your own keystore and wire it
-> into `signingConfigs` — see [Signing](#signing).
-
-The APK bundles only `arm64-v8a` and `armeabi-v7a` native libraries (no emulator ABIs) and drops the
-desktop/test JNI libraries that libsignal's AAR also ships, which brings the download down from
-~680 MB to **~48 MB** for the signed release build.
+`INTERNET` is requested **only** for the optional online transport. Nothing in the mesh path uses
+it, and the app works to its full offline extent with no account and no network.
 
 ---
 
 ## What works today
 
-* **Onboarding** — pick a display name and language, then land in the app; everything is local.
-* **Pairing** — show your pairing code as QR, or import a peer's code by scanning. The code carries
-  the device id, identity key and a one‑time pre‑key bundle, so the first message can be a real
-  X3DH/PQXDH session instead of trust‑on‑first‑use.
-* **Discovery** — Nearby Connections advertises and discovers on `P2P_CLUSTER`; a watchdog
-  re‑arms advertising/discovery every 15 s, reconnects dropped endpoints and survives Wi‑Fi Direct
-  teardown.
-* **Chats** — 1:1 and group conversations with per‑message delivery state, retry, text and file
-  attachments (files are chunked, capped at 90 KB per frame and encrypted with the file key).
-* **Store‑and‑forward** — undeliverable packets are queued in the encrypted database with a TTL and
-  relayed by any device that holds them (flooding suppressed by a seen‑packet cache), so a message
-  can hop through an intermediate phone to reach someone out of radio range.
-* **Connectors / Settings** — toggles for Bluetooth, Wi‑Fi, battery saver (lower duty cycle),
-  background service, theme and language; "erase all data" wipes the key material and database.
-* **Security** — Signal Protocol via `org.signal:libsignal-android`, keys generated in the Android
-  Keystore where the platform allows it, SQLCipher for every table, no plaintext message on disk, no
-  backups (`allowBackup=false`), no cleartext data in logs.
+### Mesh (unchanged, still the core)
 
-## Known limitations (read before judging the demo)
+* **Pairing** — QR code carrying device id, identity key and a one‑time pre‑key bundle, so the first
+  message is a real X3DH/PQXDH session.
+* **Discovery** — Nearby Connections on `P2P_CLUSTER` with a 15 s watchdog that re‑arms advertising,
+  reconnects dropped endpoints and survives Wi‑Fi Direct teardown.
+* **Store‑and‑forward** — undeliverable packets wait in the encrypted DB with a TTL and are relayed
+  by any device holding them; duplicates are suppressed by a seen‑packet cache.
+* **Files and voice notes** — chunked, encrypted per frame, integrity hash on completion.
+* **Diagnostics** — peer status, relay statistics and a topology view.
 
-1. **Demo signing key** — see above.
-2. **R8/minify is off** in the release variant. libsignal's JNI bridge resolves Java symbols by name
-   at runtime; shrinking is deliberately disabled until the app has been exercised on physical
-   devices with a shrunk build. Enable it in `app/build.gradle.kts` after device testing.
-3. **No update checker.** A previous version phoned home for updates, which contradicts the
-   offline promise; it was removed along with the `INTERNET` permission. If you want one, keep it
-   **opt‑in and documented**: it must be a static manifest on your own host (or a Vercel/Supabase
-   static file), never used for message routing.
-4. **Group sessions** are fan‑out 1:1 Signal sessions (one session per member), not Sender Keys —
-   correct but O(members) traffic per message.
-5. **File transfers** are limited by Nearby payload size and are not resumable across reconnects.
-6. **Background service** keeps the mesh alive but Android may still kill it on aggressive OEMs.
+### Online (new)
+
+* **Accounts** — email sign‑up / sign‑in, refresh tokens, session stored under a Keystore key,
+  account deletion.
+* **Multi‑device** — each installation registers its own device id, public bundle and one‑time
+  pre‑keys; devices can be listed and revoked.
+* **Realtime delivery** — envelopes, receipts, typing and reactions over Supabase Realtime. Events
+  are hints: every (re)connection backfills from a stored cursor, so a dropped socket loses nothing.
+* **Offline outbox** — messages sent without a network are queued with capped exponential backoff and
+  flushed by a network‑constrained `WorkManager` job, even after process death.
+* **Messaging** — replies (schema + render), edit, delete‑for‑everyone, delete‑for‑me, reactions,
+  starring, per‑chat drafts, typing indicators, read receipts, unread counts, local search.
+* **Groups and channels** — create, membership, roles, public/private channels, discovery, joining;
+  posting permissions are enforced server‑side.
+* **Unified search** — one field over chats, messages, contacts (all local, decrypted on device) and
+  public accounts/channels (server directory).
+* **Transport indicator** — the chat list always says what is usable right now: `Mesh`, `Online`,
+  `Mesh + online`, `Connecting`.
 
 ---
 
-## Architecture
+## How the two transports combine
 
-```
-app/src/main/java/com/offlinemesh/messenger/
-├── core/
-│   ├── crypto/     KeystoreHelper, SignalStore, PreKeyBundleCodec, CryptoManager, FileVault
-│   ├── db/         Room entities/DAOs over SQLCipher (12 tables, no plaintext fallback)
-│   └── mesh/       Packet (framing + header codec), FileChunker, MeshManager, RadioController
-├── data/           SettingsRepository, PairingCodec, ContactRepository, ChatRepository, FileRepository
-├── service/        MeshService (foreground, connected‑device type)
-├── work/           SyncWorker (periodic store‑and‑forward flush)
-└── presentation/   Material 3 Compose UI: AppViewModel, 7 screens, NavGraph, theme, Format
-```
+`domain/TransportSelector` is a pure function of four observable facts (signed in, network, whether
+this conversation exists on the server, whether the peer is in mesh range):
 
-**Message path.** UI → `AppViewModel` → `ChatRepository` (encrypt via `CryptoManager`, persist
-ciphertext) → `MeshManager` (frame into packets, flood) → Nearby payload → peer `MeshManager` →
-`CryptoManager.decrypt` → database → Compose UI.
+| Situation | Transport |
+| --- | --- |
+| signed in + network + linked + peer nearby | **BOTH** (first ciphertext wins, duplicates suppressed) |
+| signed in + network + linked | **ONLINE** |
+| peer nearby | **MESH** |
+| neither | **QUEUE** (local queue, retried by the relay queue and the online outbox) |
 
-**Wire format.** Every frame is `[magic 'O','M'][version][type][msgId][ttl][hops][headerLen]…`.
-Discovery only exposes an endpoint *name*, so identity material travels in an authenticated `HELLO`
-packet rather than in the advertisement.
+A message row is always written *before* any encryption or upload, so a crash mid‑send leaves a
+queued message, not a lost one. An online failure never prevents the mesh attempt in the same send.
 
-**Crypto.** libsignal `PreKeyBundle` → `SessionBuilder`/`SessionCipher`; ciphertext type constants
-(2 = pre‑key, 3 = whisper, 7/8 = sender key) are stored alongside the blob so the receiver knows
-which decrypt path to use. Trust is shown as a safety number derived from both identity keys.
+Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
+[`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/SUPABASE.md`](docs/SUPABASE.md).
 
 ---
 
@@ -107,54 +78,60 @@ Requirements: JDK 17, Android SDK 34 + build‑tools 34.
 git clone https://github.com/Pillow1243/Messenger.git
 cd Messenger
 ./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest      # 6 test classes: crypto codec, mesh routing, chunking, pairing, formatting
+./gradlew testDebugUnitTest      # unit tests (mesh, crypto, transport policy, realtime frames)
+./gradlew lintDebug              # lint is failing the build on errors, by design
 ```
 
-CI (`.github/workflows/build.yml`) runs on every push: unit tests → `assembleDebug`/`assembleRelease`
-→ artifact upload → `demo-latest` prerelease. Each run also posts a commit comment with APK sizes and
-the interesting part of the Gradle log.
+Point the online transport at your own project with Gradle properties (never commit them):
+
+```bash
+./gradlew assembleRelease -PsupabaseUrl=https://<ref>.supabase.co -PsupabaseKey=<anon-key>
+```
+
+Defaults in `app/build.gradle.kts` are the project's URL and **anon** key — public by design. The
+service‑role key is never used by the app.
 
 ### Signing
 
-The release variant currently reuses the debug signing config. Replace it with your own:
+Release builds are signed only from secrets; there is no fallback to the debug key.
 
 ```bash
 keytool -genkeypair -v -keystore release.keystore -alias offlinemesh \
         -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-```kotlin
-signingConfigs {
-    create("release") {
-        storeFile = file(System.getenv("KEYSTORE_PATH") ?: "release.keystore")
-        storePassword = System.getenv("KEYSTORE_PASSWORD")
-        keyAlias = "offlinemesh"
-        keyPassword = System.getenv("KEY_PASSWORD")
-    }
-}
-// then: buildTypes { release { signingConfig = signingConfigs.getByName("release") } }
-```
+Provide `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD` to the release
+workflow. `-PdemoSign=true` produces a debug‑signed **demo** variant (`.demo` application id) that is
+what the CI publishes to the `demo-latest` prerelease; it is not an upgrade path for a real install.
+
+### CI
+
+* `ci.yml` — every push and PR: unit tests → lint → assemble debug/demo/release → Room schema drift
+  check → artifact upload. All actions are pinned to commit SHAs.
+* `release.yml` — tags only: signed APK + AAB, checksums, build metadata, release notes; concurrency
+  is serialised per tag and signing is skipped (not faked) when secrets are absent.
 
 ## Permissions
 
 | Permission | Why |
 | --- | --- |
+| `INTERNET`, `ACCESS_NETWORK_STATE` | Optional online transport only |
 | `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` (API 31+) / `BLUETOOTH`, `BLUETOOTH_ADMIN` (≤30) | Nearby discovery and connections |
 | `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` (≤30) | Required by Nearby on older Android |
 | `NEARBY_WIFI_DEVICES` | Wi‑Fi Direct transport on API 33+ |
-| `CAMERA` | QR scanning of pairing codes |
-| `RECORD_AUDIO` | Reserved for voice notes |
+| `CAMERA` | QR pairing codes |
+| `RECORD_AUDIO` | Voice notes |
 | `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE` | Keeping the mesh alive in the background |
 | `WAKE_LOCK` | Radio duty‑cycle under battery saver |
 
-Deliberately **absent:** `INTERNET`, `ACCESS_NETWORK_STATE`. The app cannot send or receive anything
-over the internet.
-
 ## Privacy
 
-No analytics, no crash reporting, no account, no server. Message bodies, keys and metadata stay in the
-SQLCipher database on the device; `allowBackup=false` and `dataExtractionRules` keep them out of
-cloud backups. "Erase all data" in Settings deletes the database and the key material.
+* Message bodies are encrypted **per recipient device** before they leave the process; the server
+  stores ciphertext only and cannot read, index or search it.
+* Search runs on the device because the plaintext never leaves it.
+* No analytics, no crash reporting, no advertising SDK, no telemetry.
+* `allowBackup=false`; the database is excluded from cloud backups by policy and by design.
+* Deleting the account removes server‑side data; "Erase all data" removes local keys and database.
 
 ## Testing
 
@@ -167,21 +144,38 @@ cloud backups. "Erase all data" in Settings deletes the database and the key mat
 | `PacketCodecTest` | frame encode/decode, header round‑trip, TTL/hop handling, malformed input |
 | `RoutingPolicyTest` | next‑hop selection, relay suppression, TTL expiry |
 | `MeshDeliveryTest` | store‑and‑forward queue and seen‑packet cache expiry |
-| `FileChunkerTest` | chunking/reassembly boundaries (`MAX_BYTES_DATA_SIZE`) |
+| `FileChunkerTest` | chunking/reassembly boundaries |
 | `PairingCodecTest` | pairing code round‑trip and validation |
 | `FormatTest` | timestamp/byte formatting, locale independence |
+| `TransportSelectorTest` | the full MESH/ONLINE/BOTH/QUEUE matrix |
+| `RealtimeProtocolTest` | join/heartbeat frames, change parsing, malformed input |
+| `BackoffTest` | outbox retry schedule, cap and exhaustion |
 
-Instrumented/on‑device tests are not wired up yet (`androidTest` scaffolding only).
+Plus a **server‑side authorization suite** (`supabase/tests/rls_policies.sql`) that runs against the
+live project and asserts the whole permission matrix.
+
+## Known limitations
+
+1. **Online media upload is not wired.** Mesh files work; sending a file over the online transport is
+   refused with `media_online_unsupported` rather than silently lost. The bucket, RLS and signed‑URL
+   path exist.
+2. **Calls are not implemented.** No WebRTC stack and no call button that pretends otherwise.
+3. **Group encryption is per‑device fan‑out**, not Sender Keys: correct, but O(devices) ciphertexts.
+4. **R8/minify stays off** until a shrunk build has been exercised on physical devices (libsignal's
+   JNI bridge resolves symbols by name).
+5. **Background service** can still be killed by aggressive OEM power managers.
+6. **No physical‑device validation of the online path yet** — it compiles, unit tests pass and the
+   backend assertions pass, but end‑to‑end realtime behaviour needs two real devices.
 
 ## Roadmap
 
-* On‑device validation with a shrunk (R8) release build, then re‑enable minification.
-* Sender Keys for group chats instead of per‑member sessions.
-* Resumable file transfers; media/voice notes wiring.
-* Optional, opt‑in update manifest (static file only).
+* Online media: encrypted upload, resumable transfer, thumbnails, progress/cancel.
+* Sender Keys for large groups.
+* WebRTC calls with the `mm_calls` signalling tables already in place.
+* Media playback, message pinning UI, translation (opt‑in), scheduled messages.
 
 ## License
 
-The application code in this repository is provided as‑is for the demo. It links against
-[libsignal](https://github.com/signalapp/libsignal), which is **AGPL‑3.0** — distributing a binary that
-includes it means complying with the AGPL. Read the licence before shipping this app.
+The application code is provided as‑is for the demo. It links against
+[libsignal](https://github.com/signalapp/libsignal), which is **AGPL‑3.0** — distributing a binary
+that includes it means complying with the AGPL. Read the licence before shipping this app.

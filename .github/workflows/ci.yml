@@ -55,21 +55,48 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.0.1
 
+      # Gradle's own log is only reachable through the artifact blob, which some CI
+      # environments cannot fetch. Re-emitting the compiler/lint errors as workflow
+      # annotations makes the failure readable directly from the check run.
       - name: Unit tests
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --console=plain testDebugUnitTest 2>&1 | tee test.log
+          if ! ./gradlew --no-daemon --console=plain testDebugUnitTest > test.log 2>&1; then
+            grep -E "^e: |^w: .*error|error:|FAILED|Execution failed|Caused by" test.log \
+              | head -25 | cut -c1-900 | while IFS= read -r line; do
+                echo "::error title=gradle::$line"
+              done
+            tail -30 test.log
+            exit 1
+          fi
+          tail -5 test.log
 
       - name: Lint
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --console=plain lintDebug 2>&1 | tee -a test.log
+          if ! ./gradlew --no-daemon --console=plain lintDebug > lint.log 2>&1; then
+            grep -E "Error:|error:" lint.log | head -25 | cut -c1-900 | while IFS= read -r line; do
+              echo "::error title=lint::$line"
+            done
+            grep -E "^\s+[0-9]+ errors?, [0-9]+ warnings?" lint.log | head -5
+            tail -30 lint.log
+            exit 1
+          fi
+          tail -5 lint.log
 
       - name: Assemble debug, demo and release
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --console=plain \
-            assembleDebug assembleDemo -PdemoSign=true 2>&1 | tee -a test.log
+          if ! ./gradlew --no-daemon --console=plain assembleDebug assembleDemo -PdemoSign=true \
+              > assemble.log 2>&1; then
+            grep -E "^e: |error:|FAILED|Execution failed|Caused by" assemble.log \
+              | head -25 | cut -c1-900 | while IFS= read -r line; do
+                echo "::error title=assemble::$line"
+              done
+            tail -30 assemble.log
+            exit 1
+          fi
+          tail -5 assemble.log
 
       - name: Checksums and size report
         run: |
@@ -91,6 +118,8 @@ jobs:
             app/build/reports/**
             app/build/test-results/**
             test.log
+            lint.log
+            assemble.log
           if-no-files-found: ignore
           retention-days: 14
 
