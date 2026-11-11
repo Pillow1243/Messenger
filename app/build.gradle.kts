@@ -75,6 +75,13 @@ android {
             // Compress the native libraries inside the APK instead of storing them raw.
             // They are extracted on first launch, which keeps the download noticeably smaller.
             useLegacyPackaging = true
+            // libsignal's AAR also contains its JNI test build plus desktop libraries
+            // (.dylib/.dll) that Android can never load. Excluding them removes ~270 MB.
+            excludes += setOf(
+                "**/libsignal_jni_testing.so",
+                "**/*.dylib",
+                "**/*.dll"
+            )
         }
         resources {
             excludes += setOf(
