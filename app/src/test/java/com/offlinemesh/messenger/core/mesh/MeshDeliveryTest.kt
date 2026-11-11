@@ -16,10 +16,13 @@ class SeenPacketCacheTest {
     }
 
     @Test
-    fun `entries expire after the ttl`() {
+    fun `entries are forgotten after the ttl so the cache cannot grow forever`() {
         val cache = SeenPacketCache(ttlMs = 1_000)
         cache.markSeen("p1", 0)
-        assertFalse(cache.markSeen("p1", 5_000))
+        assertFalse(cache.contains("p1", 5_000))
+        // A packet id seen again after the window is treated as new: the ratchet, not this
+        // cache, is what rejects replays at the protocol level.
+        assertTrue(cache.markSeen("p1", 5_000))
     }
 
     @Test
