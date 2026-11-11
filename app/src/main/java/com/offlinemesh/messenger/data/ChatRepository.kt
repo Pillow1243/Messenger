@@ -169,12 +169,13 @@ class ChatRepository(
 
     // -------------------------------------------------------------------- sending
 
-    suspend fun sendText(conversationId: String, text: String) {
+    suspend fun sendText(conversationId: String, text: String, replyToId: String? = null) {
         val body = text.trim()
         if (body.isEmpty()) return
         val conversation = conversations.getById(conversationId) ?: return
         val msgId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
+        val replyTo = replyToId?.takeIf { messages.getById(it) != null }
         val entity = MessageEntity(
             id = msgId,
             conversationId = conversationId,
@@ -183,7 +184,8 @@ class ChatRepository(
             type = MessageType.TEXT,
             body = body,
             timestamp = now,
-            status = MessageStatus.QUEUED
+            status = MessageStatus.QUEUED,
+            replyToId = replyTo
         )
         messages.upsert(entity)
         conversations.updateLastMessage(conversationId, now, previewOf(body), 0)

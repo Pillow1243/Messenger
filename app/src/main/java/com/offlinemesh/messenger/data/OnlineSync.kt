@@ -23,6 +23,7 @@ import com.offlinemesh.messenger.network.SupabaseException
 import com.offlinemesh.messenger.network.SupabaseHttp
 import com.offlinemesh.messenger.network.SupabaseRealtime
 import com.offlinemesh.messenger.core.security.SecretStore
+import com.offlinemesh.messenger.service.MessageNotifier
 import com.offlinemesh.messenger.work.OutboxWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -424,7 +425,10 @@ class OnlineSync(
                 clientMsgId = remote.clientMsgId,
                 remoteId = remote.id,
                 transport = "ONLINE",
-                deliveredAt = System.currentTimeMillis()
+                deliveredAt = System.currentTimeMillis(),
+                replyToId = remote.meta.str("reply_to")?.let { remoteReply ->
+                    messagesDao.getByRemoteId(remoteReply)?.id
+                }
             )
         )
         conversationsDao.updateLastMessage(
@@ -434,8 +438,20 @@ class OnlineSync(
             1
         )
         rememberSender(remote.senderId, remote.senderDeviceId)
+        notifyIncoming(localConversationId, remote.senderId, body)
         runCatching { api.markDelivered(remote.id, myUserId ?: return) }
         runCatching { api.deleteEnvelope(remote.id, myUserId ?: return) }
+    }
+
+    /** Local notification only: no push service ever sees the text. */
+    private suspend fun notifyIncoming(conversationId: String, senderId: String, body: String) {
+        val conversation = conversationsDao.getById(conversationId) ?: return
+        if (conversation.muted) return
+        if (conversation.type == "CHANNEL") return // channel posts are opt-in reading, not interruptions
+        val title = conversation.title.ifBlank { runCatching { displayNameOf(senderId) }.getOrDefault(senderId) }
+        runCatching {
+            MessageNotifier.notifyMessage(context, conversationId, title, body)
+        }.onFailure { Log.w(TAG, "Could not post notification", it) }
     }
 
     // --------------------------------------------------------------------- sending
@@ -467,7 +483,7 @@ class OnlineSync(
                         conversationId = onlineConversationId,
                         clientMsgId = message.clientMsgId.ifBlank { message.id },
                         kind = kindOf(message),
-                        meta = JsonObject(emptyMap())
+                        meta = messageMeta(message)
                     )
                     api.putEnvelopes(envelopes.map { it.copy(messageId = remote.id) })
                     messagesDao.markUploaded(message.id, remote.id, MessageStatus.SENT)
@@ -492,6 +508,18 @@ class OnlineSync(
      * Encrypts one plaintext for every device of every other member. Sessions are created lazily
      * from a freshly claimed pre-key bundle, so a rotated key can never yield stale ciphertext.
      */
+    /**
+     * Server-visible message metadata. Only ids and routing hints belong here - never content.
+     * A reply carries the id of the message it answers; the text itself still travels encrypted.
+     */
+    private suspend fun messageMeta(message: MessageEntity): JsonObject {
+        val builder = buildJsonObject { }
+        val replyLocalId = message.replyToId ?: return builder
+        val target = messagesDao.getById(replyLocalId) ?: return builder
+        val targetRemoteId = target.remoteId ?: return builder
+        return buildJsonObject { put("reply_to", targetRemoteId) }
+    }
+
     private suspend fun envelopesFor(
         conversation: ConversationEntity,
         userId: String,

@@ -3,6 +3,7 @@ package com.offlinemesh.messenger
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
@@ -19,11 +21,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.offlinemesh.messenger.presentation.AppViewModel
 import com.offlinemesh.messenger.presentation.navigation.NavGraph
 import com.offlinemesh.messenger.presentation.theme.OfflineMeshTheme
+import com.offlinemesh.messenger.service.MessageNotifier
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
     private val app: MessengerApp get() = application as MessengerApp
+
+    /** Conversation requested by a notification tap, consumed once by the navigation graph. */
+    private val pendingConversation = mutableStateOf<String?>(null)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -33,6 +39,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         requestMeshPermissions()
+        pendingConversation.value = intent?.getStringExtra(MessageNotifier.EXTRA_CONVERSATION)
 
         setContent {
             val vm: AppViewModel = viewModel(factory = AppViewModel.factory(app))
@@ -49,12 +56,22 @@ class MainActivity : AppCompatActivity() {
             }
 
             OfflineMeshTheme(darkTheme = darkTheme) {
-                NavGraph(vm = vm)
+                NavGraph(
+                    vm = vm,
+                    startConversation = pendingConversation.value,
+                    onStartConsumed = { pendingConversation.value = null }
+                )
             }
         }
 
         // A fresh launch is a good moment to push anything still queued.
         app.appScope.launch { runCatching { app.chats.retryPending() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_CONVERSATION)
     }
 
     override fun onResume() {

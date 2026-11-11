@@ -129,10 +129,11 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
 
     // ------------------------------------------------------------------------ chats
 
-    fun sendText(conversationId: String, text: String) = viewModelScope.launch {
-        runCatching { app.chats.sendText(conversationId, text) }
-            .onFailure { _error.value = "error_unknown" }
-    }
+    fun sendText(conversationId: String, text: String, replyToId: String? = null) =
+        viewModelScope.launch {
+            runCatching { app.chats.sendText(conversationId, text, replyToId) }
+                .onFailure { _error.value = "error_unknown" }
+        }
 
     fun sendFile(conversationId: String, file: File, displayName: String) = viewModelScope.launch {
         _busy.value = true

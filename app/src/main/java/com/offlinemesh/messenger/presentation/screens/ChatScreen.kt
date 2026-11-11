@@ -88,6 +88,7 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
     var draft by remember { mutableStateOf("") }
     var actionTarget by remember { mutableStateOf<MessageEntity?>(null) }
     var editing by remember { mutableStateOf<MessageEntity?>(null) }
+    var replyTarget by remember { mutableStateOf<MessageEntity?>(null) }
     var recording by remember { mutableStateOf(false) }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordStart by remember { mutableStateOf(0L) }
@@ -235,6 +236,26 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
         },
         bottomBar = {
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
+            replyTarget?.let { target ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "↳ " + target.body.take(60),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { replyTarget = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            }
             if (typingPeers.isNotEmpty()) {
                 Text(
                     text = stringResource(R.string.chat_typing),
@@ -279,7 +300,8 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                         val text = draft.trim()
                         if (text.isNotEmpty()) {
                             draft = ""
-                            vm.sendText(conversationId, text)
+                            vm.sendText(conversationId, text, replyTarget?.id)
+                            replyTarget = null
                         }
                     },
                     enabled = draft.isNotBlank()
@@ -325,6 +347,9 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                             message = message,
                             showSender = conversation?.isGroup == true,
                             onLongPress = { actionTarget = message },
+                            replyPreview = message.replyToId?.let { id ->
+                                messages.firstOrNull { it.id == id }?.body
+                            },
                             onOpenAttachment = {
                                 val path = message.filePath
                                 if (path != null) {
@@ -369,6 +394,13 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                             enabled = target.remoteId != null
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_reply)) },
+                        onClick = {
+                            actionTarget = null
+                            replyTarget = target
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.chat_star)) },
                         onClick = {
@@ -420,9 +452,9 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 private fun MessageBubble(
-
     message: MessageEntity,
     showSender: Boolean,
+    replyPreview: String?,
     onLongPress: () -> Unit,
     onOpenAttachment: () -> Unit
 ) {
@@ -442,6 +474,16 @@ private fun MessageBubble(
                 .combinedClickable(onClick = {}, onLongClick = onLongPress)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
+            if (replyPreview != null) {
+                Text(
+                    text = "↳ " + replyPreview.take(80),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(2.dp))
+            }
             if (showSender && !outgoing) {
                 Text(
                     text = message.senderDeviceId.take(8),

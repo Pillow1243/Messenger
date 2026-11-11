@@ -174,11 +174,16 @@
     <string name="channels_username">نام کاربری عمومی (اختیاری)</string>
     <string name="channels_public">در فهرست عمومی نمایش داده شود</string>
 
+    <!-- Notifications -->
+    <string name="notifications_messages">پیام‌ها</string>
+    <string name="notifications_messages_desc">پیام‌های تازه‌ای که وقتی برنامه در پس‌زمینه بود رسیده‌اند. هیچ چیزی از طریق سرور فرستاده نمی‌شود.</string>
+
     <!-- Chat extras -->
     <string name="chat_typing">در حال نوشتن…</string>
     <string name="chat_react">واکنش</string>
     <string name="chat_edit">ویرایش</string>
     <string name="chat_delete_for_all">حذف برای همه</string>
+    <string name="chat_reply">پاسخ</string>
     <string name="chat_star">ستاره</string>
     <string name="chat_saved">پیام‌های ذخیره‌شده</string>
     <string name="action_create">ساخت</string>

@@ -174,11 +174,16 @@
     <string name="channels_username">Public username (optional)</string>
     <string name="channels_public">Listed publicly</string>
 
+    <!-- Notifications -->
+    <string name="notifications_messages">Messages</string>
+    <string name="notifications_messages_desc">New messages that arrived while the app was in the background. Nothing is pushed through a server.</string>
+
     <!-- Chat extras -->
     <string name="chat_typing">typing…</string>
     <string name="chat_react">React</string>
     <string name="chat_edit">Edit</string>
     <string name="chat_delete_for_all">Delete for everyone</string>
+    <string name="chat_reply">Reply</string>
     <string name="chat_star">Star</string>
     <string name="chat_saved">Saved messages</string>
     <string name="action_create">Create</string>

@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,7 +81,11 @@ private val bottomItems = listOf(
 )
 
 @Composable
-fun NavGraph(vm: AppViewModel) {
+fun NavGraph(
+    vm: AppViewModel,
+    startConversation: String? = null,
+    onStartConsumed: () -> Unit = {}
+) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snapshot = settings
@@ -90,6 +95,14 @@ fun NavGraph(vm: AppViewModel) {
             CircularProgressIndicator()
         }
         return
+    }
+
+    // A notification tap carries the conversation id; open it once the graph is ready.
+    LaunchedEffect(startConversation, snapshot.onboarded) {
+        if (startConversation != null && snapshot.onboarded) {
+            navController.navigate(Routes.chat(startConversation))
+            onStartConsumed()
+        }
     }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
