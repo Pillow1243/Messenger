@@ -845,7 +845,7 @@ private fun MessageBubble(
             }
             if (showSender && !outgoing) {
                 Text(
-                    text = (message.senderUserId ?: message.senderDeviceId).take(8),
+                    text = message.senderDeviceId.take(8),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary
                 )

@@ -12,6 +12,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.offlinemesh.messenger.MessengerApp
 import com.offlinemesh.messenger.core.crypto.MediaCipher
+import com.offlinemesh.messenger.core.crypto.MediaIntegrityException
+import com.offlinemesh.messenger.core.crypto.MediaTransferCancelledException
 import com.offlinemesh.messenger.core.db.MessageDao
 import com.offlinemesh.messenger.core.db.SyncStateEntity
 import com.offlinemesh.messenger.core.media.MediaMetadataHelper
@@ -88,22 +90,23 @@ class MediaTransferWorker(
             if (needEncrypt) {
                 syncDao.remove(tusStateKey)
                 val enc = app.files.openSealedStream(sealedFile).use { plainStream ->
-                    MediaCipher.encryptStreamToFile(
-                        plainInput = plainStream,
-                        cipherDestFile = encTemp
-                    ) { written ->
-                        if (isStopped) throw CancellationException("Transfer cancelled")
-                        kotlinx.coroutines.runBlocking {
-                            dao.updateTransferState(messageId, STATE_UPLOADING, written / 4L, null)
+                    MediaCipher.encryptFile(
+                        plaintextIn = plainStream,
+                        encryptedDest = encTemp,
+                        isCancelled = { isStopped },
+                        onProgress = { written ->
+                            kotlinx.coroutines.runBlocking {
+                                dao.updateTransferState(messageId, STATE_UPLOADING, written / 4L, null)
+                            }
                         }
-                    }
+                    )
                 }
                 dao.updateMediaUploadMetadata(
                     id = messageId,
                     attachmentId = msg.attachmentRemoteId,
                     objectPath = objectPath,
-                    cipherSha256 = enc.cipherSha256Hex,
-                    cipherSize = enc.cipherSizeBytes,
+                    cipherSha256 = enc.cipherSha256,
+                    cipherSize = enc.cipherSize,
                     keyB64 = enc.keyBase64,
                     ivB64 = enc.ivBase64,
                     transferState = STATE_UPLOADING,
@@ -248,12 +251,13 @@ class MediaTransferWorker(
             }
 
             MediaCipher.decryptFile(
-                cipherFile = partFile,
-                plainDestFile = decTemp,
+                encryptedSource = partFile,
+                plaintextDest = decTemp,
                 keyBase64 = keyB64,
                 ivBase64 = ivB64,
-                expectedCipherSha256Hex = msg.cipherSha256,
-                expectedPlainSha256Hex = msg.fileSha256.takeIf { it.isNotBlank() }
+                expectedCipherSha256 = msg.cipherSha256,
+                expectedPlaintextSha256 = msg.fileSha256.takeIf { it.isNotBlank() },
+                isCancelled = { isStopped }
             )
 
             val plainSize = decTemp.length()
@@ -265,6 +269,10 @@ class MediaTransferWorker(
             runCatching { partFile.delete() }
             dao.markMediaDownloaded(messageId, sealed.absolutePath, plainSize)
             return Result.success()
+        } catch (tamper: MediaIntegrityException) {
+            runCatching { partFile.delete() }
+            runCatching { decTemp.delete() }
+            return failTransfer(dao, messageId, "integrity_verification_failed")
         } catch (tamper: AEADBadTagException) {
             runCatching { partFile.delete() }
             runCatching { decTemp.delete() }
@@ -273,6 +281,15 @@ class MediaTransferWorker(
             runCatching { partFile.delete() }
             runCatching { decTemp.delete() }
             return failTransfer(dao, messageId, "integrity_verification_failed")
+        } catch (cancelled: MediaTransferCancelledException) {
+            runCatching { decTemp.delete() }
+            val latest = dao.getById(messageId)
+            if (latest?.transferState == STATE_CANCELLED) {
+                runCatching { partFile.delete() }
+                return Result.failure()
+            }
+            dao.updateTransferState(messageId, STATE_PAUSED, partFile.takeIf { it.isFile }?.length() ?: 0L, null)
+            return Result.failure()
         } catch (ce: CancellationException) {
             runCatching { decTemp.delete() }
             val latest = dao.getById(messageId)

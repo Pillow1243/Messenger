@@ -119,6 +119,16 @@ object MediaCipher {
         }
     }
 
+    fun encryptFile(
+        sourceFile: File,
+        destFile: File,
+        isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted },
+        onProgress: ((Long) -> Unit)? = null
+    ): EncryptedMediaMetadata =
+        FileInputStream(sourceFile).use { fis ->
+            encryptFile(fis, destFile, isCancelled, onProgress)
+        }
+
     fun decryptStream(
         encryptedIn: InputStream,
         plaintextOut: OutputStream,
@@ -200,6 +210,43 @@ object MediaCipher {
             return written
         } finally {
             key.fill(0)
+        }
+    }
+
+    fun decryptToFile(
+        cipherIn: InputStream,
+        plainDest: File,
+        keyBase64: String,
+        ivBase64: String,
+        expectedCipherSha256: String? = null,
+        expectedPlainSha256: String? = null,
+        isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted },
+        onProgress: ((Long) -> Unit)? = null
+    ): Long {
+        plainDest.parentFile?.mkdirs()
+        val tempOut = File(plainDest.parentFile, "${plainDest.name}.dec.tmp")
+        return try {
+            val total = FileOutputStream(tempOut).use { fos ->
+                decryptStream(
+                    encryptedIn = cipherIn,
+                    plaintextOut = fos,
+                    keyBase64 = keyBase64,
+                    ivBase64 = ivBase64,
+                    expectedCipherSha256 = expectedCipherSha256,
+                    expectedPlaintextSha256 = expectedPlainSha256,
+                    isCancelled = isCancelled,
+                    onProgress = onProgress
+                )
+            }
+            if (plainDest.exists()) plainDest.delete()
+            if (!tempOut.renameTo(plainDest)) {
+                tempOut.copyTo(plainDest, overwrite = true)
+                tempOut.delete()
+            }
+            total
+        } catch (t: Throwable) {
+            tempOut.delete()
+            throw t
         }
     }
 
