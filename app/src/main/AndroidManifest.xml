@@ -27,7 +27,12 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
 
-    <!-- Required by Nearby on API 26-30 for BLE scanning, and for Wi-Fi Direct on 26-32. -->
+    <!--
+      Required by Nearby on API 26-30 for BLE scanning, and for Wi-Fi Direct on 26-32.
+      Android pairs FINE with COARSE: requesting only FINE is a lint error, and the platform
+      downgrades a lone FINE request to COARSE on newer versions anyway.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <!-- Wi-Fi Direct transport -->
