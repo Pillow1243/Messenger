@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material3.AlertDialog
@@ -83,7 +84,10 @@ fun ChannelsScreen(
                 title = { Text(stringResource(R.string.channels_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Text("‹", style = MaterialTheme.typography.headlineSmall)
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.cancel)
+                        )
                     }
                 }
             )

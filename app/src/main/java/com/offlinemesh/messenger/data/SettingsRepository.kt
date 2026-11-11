@@ -25,7 +25,12 @@ data class AppSettings(
     val wifiEnabled: Boolean = true,
     val batterySaver: Boolean = false,
     val backgroundService: Boolean = true,
-    val onboarded: Boolean = false
+    val onboarded: Boolean = false,
+    val notificationsEnabled: Boolean = true,
+    val notifyDirect: Boolean = true,
+    val notifyGroups: Boolean = true,
+    val notifyChannels: Boolean = false,
+    val notifyCalls: Boolean = true
 ) {
     /** Nearby Connections picks transports itself; with both connectors off the mesh is pointless. */
     val radiosUsable: Boolean get() = bluetoothEnabled || wifiEnabled
@@ -44,6 +49,11 @@ class SettingsRepository(private val context: Context) {
         val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
         val BACKGROUND = booleanPreferencesKey("background_service")
         val ONBOARDED = booleanPreferencesKey("onboarded")
+        val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
+        val NOTIFY_DIRECT = booleanPreferencesKey("notify_direct")
+        val NOTIFY_GROUPS = booleanPreferencesKey("notify_groups")
+        val NOTIFY_CHANNELS = booleanPreferencesKey("notify_channels")
+        val NOTIFY_CALLS = booleanPreferencesKey("notify_calls")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -57,7 +67,12 @@ class SettingsRepository(private val context: Context) {
             wifiEnabled = prefs[Keys.WIFI] ?: true,
             batterySaver = prefs[Keys.BATTERY_SAVER] ?: false,
             backgroundService = prefs[Keys.BACKGROUND] ?: true,
-            onboarded = prefs[Keys.ONBOARDED] ?: false
+            onboarded = prefs[Keys.ONBOARDED] ?: false,
+            notificationsEnabled = prefs[Keys.NOTIFICATIONS_ENABLED] ?: true,
+            notifyDirect = prefs[Keys.NOTIFY_DIRECT] ?: true,
+            notifyGroups = prefs[Keys.NOTIFY_GROUPS] ?: true,
+            notifyChannels = prefs[Keys.NOTIFY_CHANNELS] ?: false,
+            notifyCalls = prefs[Keys.NOTIFY_CALLS] ?: true
         )
     }
 
@@ -90,4 +105,19 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.BACKGROUND] = enabled }
 
     suspend fun setOnboarded(value: Boolean) = context.dataStore.edit { it[Keys.ONBOARDED] = value }
+
+    suspend fun setNotificationsEnabled(enabled: Boolean) =
+        context.dataStore.edit { it[Keys.NOTIFICATIONS_ENABLED] = enabled }
+
+    suspend fun setNotifyDirect(enabled: Boolean) =
+        context.dataStore.edit { it[Keys.NOTIFY_DIRECT] = enabled }
+
+    suspend fun setNotifyGroups(enabled: Boolean) =
+        context.dataStore.edit { it[Keys.NOTIFY_GROUPS] = enabled }
+
+    suspend fun setNotifyChannels(enabled: Boolean) =
+        context.dataStore.edit { it[Keys.NOTIFY_CHANNELS] = enabled }
+
+    suspend fun setNotifyCalls(enabled: Boolean) =
+        context.dataStore.edit { it[Keys.NOTIFY_CALLS] = enabled }
 }

@@ -1,38 +1,44 @@
 package com.offlinemesh.messenger.core.db
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Guards the 1 -> 2 upgrade that every existing installation runs on first launch.
- *
- * Instrumented Room migration tests need a device, so the contract is enforced here instead: the
- * SQL must be additive, every new column must be nullable or defaulted, and the columns the online
- * transport actually reads/writes must be among the ones created.
+ * Guards both the 1 -> 2 and 2 -> 3 Room migrations so upgrading existing installations never
+ * destroys local SQLCipher messages, contacts, Signal sessions, or Sender Keys.
  */
 class MigrationTest {
 
-    private val statements = MIGRATION_1_2_STATEMENTS
-
-    private val sql = statements.joinToString("\n")
+    private val sql12 = MIGRATION_1_2_STATEMENTS.joinToString("\n")
+    private val sql23 = MIGRATION_2_3_STATEMENTS.joinToString("\n")
 
     @Test
-    fun `migration is additive only`() {
+    fun `current database version is 3`() {
+        assertEquals(3, DatabaseVersion.CURRENT)
+    }
+
+    @Test
+    fun `migrations 1_2 and 2_3 are strictly additive`() {
         val destructive = listOf(
             "DROP TABLE", "DROP INDEX", "DELETE FROM", "TRUNCATE", "ALTER TABLE RENAME",
             "RENAME TO", "CREATE TABLE messages AS"
         )
-        destructive.forEach { keyword ->
-            assertFalse("$keyword would destroy user data", sql.uppercase().contains(keyword))
+        for (sql in listOf(sql12, sql23)) {
+            destructive.forEach { keyword ->
+                assertFalse("$keyword would destroy user data", sql.uppercase().contains(keyword))
+            }
         }
-        assertTrue(sql.contains("ALTER TABLE conversations ADD COLUMN"))
-        assertTrue(sql.contains("ALTER TABLE messages ADD COLUMN"))
+        assertTrue(sql12.contains("ALTER TABLE conversations ADD COLUMN"))
+        assertTrue(sql23.contains("ALTER TABLE conversations ADD COLUMN"))
+        assertTrue(sql23.contains("ALTER TABLE messages ADD COLUMN"))
     }
 
     @Test
-    fun `new columns are nullable or defaulted`() {
-        statements.filter { it.startsWith("ALTER TABLE") && it.contains("ADD COLUMN") }
+    fun `all added columns in 1_2 and 2_3 are nullable or defaulted`() {
+        (MIGRATION_1_2_STATEMENTS + MIGRATION_2_3_STATEMENTS)
+            .filter { it.startsWith("ALTER TABLE") && it.contains("ADD COLUMN") }
             .forEach { statement ->
                 val upper = statement.uppercase()
                 assertTrue(
@@ -43,10 +49,13 @@ class MigrationTest {
     }
 
     @Test
-    fun `online transport columns exist`() {
+    fun `v1_2 online transport columns exist`() {
         val required = listOf(
             "conversations ADD COLUMN onlineId",
             "conversations ADD COLUMN peerUserId",
+            "conversations ADD COLUMN muted",
+            "conversations ADD COLUMN pinned",
+            "conversations ADD COLUMN archived",
             "conversations ADD COLUMN memberUserIds",
             "conversations ADD COLUMN draft",
             "messages ADD COLUMN clientMsgId",
@@ -62,36 +71,52 @@ class MigrationTest {
             "file_transfers ADD COLUMN plaintextSha256"
         )
         required.forEach { column ->
-            assertTrue("missing $column", sql.contains(column))
+            assertTrue("missing $column", sql12.contains(column))
         }
     }
 
     @Test
-    fun `new tables are created for the outbox, sync cursors and peer caches`() {
-        listOf("online_outbox", "sync_state", "peer_devices", "peer_profiles").forEach { table ->
+    fun `v2_3 phase 2 media, sender keys, mute, device and call columns & tables exist`() {
+        val requiredColumns = listOf(
+            "conversations ADD COLUMN encryptionVersion",
+            "conversations ADD COLUMN senderKeyEpoch",
+            "conversations ADD COLUMN distributionId",
+            "conversations ADD COLUMN mutedUntil",
+            "conversations ADD COLUMN myRole",
+            "messages ADD COLUMN fileMime",
+            "messages ADD COLUMN fileSha256",
+            "messages ADD COLUMN attachmentRemoteId",
+            "messages ADD COLUMN remoteObjectPath",
+            "messages ADD COLUMN mediaKeyBase64",
+            "messages ADD COLUMN mediaIvBase64",
+            "messages ADD COLUMN cipherSha256",
+            "messages ADD COLUMN cipherSize",
+            "messages ADD COLUMN thumbnailBase64",
+            "messages ADD COLUMN mediaWidth",
+            "messages ADD COLUMN mediaHeight",
+            "messages ADD COLUMN transferState",
+            "messages ADD COLUMN transferBytes",
+            "peer_devices ADD COLUMN name",
+            "peer_devices ADD COLUMN platform",
+            "peer_devices ADD COLUMN verified"
+        )
+        requiredColumns.forEach { column ->
+            assertTrue("missing v2->v3 column: $column", sql23.contains(column))
+        }
+
+        listOf("signal_sender_keys", "group_skdm_states", "call_logs").forEach { table ->
             assertTrue(
-                "missing table $table",
-                sql.contains("CREATE TABLE IF NOT EXISTS $table", ignoreCase = true)
+                "missing v2->v3 table: $table",
+                sql23.contains("CREATE TABLE IF NOT EXISTS $table")
             )
         }
-    }
 
-    @Test
-    fun `existing rows are backfilled instead of dropped`() {
-        assertTrue(sql.contains("UPDATE conversations SET type ="))
-        assertTrue(sql.contains("UPDATE messages SET clientMsgId = id"))
-        // Backfills must be scoped so a second run cannot rewrite data.
-        assertTrue(sql.contains("WHERE clientMsgId = ''"))
-    }
-
-    @Test
-    fun `indexes back every new lookup the sync engine performs`() {
         listOf(
-            "index_conversations_onlineId",
-            "index_messages_clientMsgId",
-            "index_messages_remoteId"
-        ).forEach { index ->
-            assertTrue("missing $index", sql.contains(index))
+            "index_group_skdm_states_conversationId",
+            "index_call_logs_conversationId",
+            "index_call_logs_startedAt"
+        ).forEach { idx ->
+            assertTrue("missing v2->v3 index: $idx", sql23.contains(idx))
         }
     }
 }

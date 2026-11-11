@@ -18,6 +18,8 @@ import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
 import com.offlinemesh.messenger.core.crypto.CryptoManager
 import com.offlinemesh.messenger.core.crypto.IdentityChangedException
+import com.offlinemesh.messenger.core.db.SeenPacketDao
+import com.offlinemesh.messenger.core.db.SeenPacketEntity
 import com.offlinemesh.messenger.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,7 +68,8 @@ data class PeerInfo(
 class MeshManager(
     private val context: Context,
     private val settings: SettingsRepository,
-    private val crypto: CryptoManager
+    private val crypto: CryptoManager,
+    private val seenPacketDao: SeenPacketDao? = null
 ) {
 
     interface PacketHandler {
@@ -111,6 +114,7 @@ class MeshManager(
     @Volatile private var helloBundle: String? = null
     @Volatile private var helloIdentity: String? = null
 
+    @Volatile private var seenPreloaded = false
     private var watchdog: Job? = null
 
     fun setHandler(newHandler: PacketHandler) {
@@ -119,6 +123,16 @@ class MeshManager(
 
     /** Loads identity and prepares the HELLO material. Safe to call repeatedly. */
     suspend fun refreshIdentity() = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        if (!seenPreloaded) {
+            seenPacketDao?.let { dao ->
+                runCatching {
+                    val now = System.currentTimeMillis()
+                    dao.deleteOlderThan(now - RoutingPolicy.PACKET_TTL_MS)
+                    dao.recentPacketIds(4096).forEach { id -> seen.markSeen(id, now) }
+                    seenPreloaded = true
+                }
+            }
+        }
         myDeviceId = settings.deviceId()
         myName = settings.snapshot().displayName.ifBlank { "Mesh device" }
         crypto.ensureIdentity()
@@ -258,6 +272,7 @@ class MeshManager(
             }
             // Rebuild HELLO material periodically: pre-keys get consumed as peers connect.
             runCatching { refreshIdentity() }
+            runCatching { seenPacketDao?.deleteOlderThan(now - RoutingPolicy.PACKET_TTL_MS) }
         }
     }
 
@@ -354,6 +369,12 @@ class MeshManager(
         if (!RoutingPolicy.isUsable(header, now)) return
         if (RoutingPolicy.isFromSelf(header, myDeviceId)) return
         if (!seen.markSeen(header.packetId, now)) return
+        val duplicateInDb = seenPacketDao?.let { dao ->
+            runCatching {
+                dao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
+            }.getOrDefault(1L) == -1L
+        } ?: false
+        if (duplicateInDb) return
 
         when (header.type) {
             PacketType.HELLO -> handleHello(endpointId, packet.body)
@@ -450,7 +471,11 @@ class MeshManager(
             return false
         }
         return try {
-            seen.markSeen(header.packetId, System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            seen.markSeen(header.packetId, now)
+            seenPacketDao?.let { dao ->
+                scope.launch { runCatching { dao.insertIfAbsent(SeenPacketEntity(header.packetId, now)) } }
+            }
             client.sendPayload(endpointId, Payload.fromBytes(frame))
                 .addOnFailureListener { e -> Log.w(TAG, "sendPayload to $endpointId failed", e) }
             true

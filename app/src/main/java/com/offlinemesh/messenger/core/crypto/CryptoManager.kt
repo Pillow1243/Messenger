@@ -24,6 +24,7 @@ import org.signal.libsignal.protocol.state.PreKeyBundle
 import org.signal.libsignal.protocol.state.PreKeyRecord
 import org.signal.libsignal.protocol.state.SignedPreKeyRecord
 import org.signal.libsignal.protocol.util.KeyHelper
+import java.util.UUID
 
 /** Keys used inside the encrypted key/value table. */
 object CryptoKeys {
@@ -33,11 +34,13 @@ object CryptoKeys {
     const val KYBER_PRE_KEY_ID = "signal_kyber_pre_key_id"
     const val NEXT_PRE_KEY_ID = "signal_next_pre_key_id"
     const val LAST_HANDED_PRE_KEY_ID = "signal_last_handed_pre_key_id"
+    const val LAST_PREKEY_ROTATED_AT = "signal_last_prekey_rotated_at"
 
     /** One device per installation: the mesh address is (deviceId, 1). */
     const val DEVICE_ID = 1
     const val TARGET_PRE_KEY_COUNT = 20
     const val MIN_PRE_KEY_COUNT = 6
+    const val PREKEY_ROTATION_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
     const val SAFETY_NUMBER_ITERATIONS = 5200
     const val SAFETY_NUMBER_VERSION = 2
 }
@@ -67,6 +70,7 @@ class CryptoManager(
 ) {
     private val kv = db.keyValueDao()
     private val dao = db.signalDao()
+    val senderKeys = SenderKeyGroupEngine(store)
 
     // ------------------------------------------------------------------ setup
 
@@ -86,6 +90,7 @@ class CryptoManager(
             createSignedPreKey(identity)
             createKyberPreKey(identity)
             generatePreKeys(CryptoKeys.TARGET_PRE_KEY_COUNT)
+            kv.put(KeyValueEntity(CryptoKeys.LAST_PREKEY_ROTATED_AT, System.currentTimeMillis().toString()))
             Log.i(TAG, "Generated fresh Signal identity")
         } else {
             if (dao.preKeyCount() < CryptoKeys.MIN_PRE_KEY_COUNT) {
@@ -162,6 +167,58 @@ class CryptoManager(
     }
 
     suspend fun oneTimePreKeyCount(): Int = withContext(Dispatchers.IO) { dao.preKeyCount() }
+
+    /** Replenishes the local one-time pre-key pool up to [CryptoKeys.TARGET_PRE_KEY_COUNT]. */
+    suspend fun replenishPreKeysIfLow(): Boolean = withContext(Dispatchers.IO) {
+        val current = dao.preKeyCount()
+        if (current >= CryptoKeys.MIN_PRE_KEY_COUNT) return@withContext false
+        generatePreKeys(CryptoKeys.TARGET_PRE_KEY_COUNT - current)
+        true
+    }
+
+    /**
+     * Rotates the signed pre-key and Kyber-1024 pre-key when older than [maxAgeMs] (or [force]).
+     * Previous signed/Kyber pre-keys remain in the local store for up to 30 days so asynchronous
+     * in-flight envelopes encrypted against the prior bundle still decrypt cleanly.
+     */
+    suspend fun rotateSignedAndKyberPreKeysIfDue(
+        maxAgeMs: Long = CryptoKeys.PREKEY_ROTATION_INTERVAL_MS,
+        force: Boolean = false
+    ): Pair<BundleKey, BundleKey>? = withContext(Dispatchers.IO) {
+        ensureIdentityBlocking()
+        val now = System.currentTimeMillis()
+        val last = kv.get(CryptoKeys.LAST_PREKEY_ROTATED_AT)?.toLongOrNull() ?: 0L
+        if (!force && last > 0L && now - last < maxAgeMs) return@withContext null
+
+        val identity = store.getIdentityKeyPair()
+        val signedId = createSignedPreKey(identity)
+        val kyberId = createKyberPreKey(identity)
+        kv.put(KeyValueEntity(CryptoKeys.LAST_PREKEY_ROTATED_AT, now.toString()))
+
+        val signed = store.loadSignedPreKey(signedId)
+        val kyber = store.loadKyberPreKey(kyberId)
+
+        // Retain the 3 newest signed pre-keys and prune older ones (> 30 days).
+        val retentionCutoff = now - 30L * 24 * 60 * 60 * 1000
+        store.loadSignedPreKeys()
+            .sortedByDescending { it.id }
+            .drop(3)
+            .filter { it.timestamp < retentionCutoff }
+            .forEach { store.removeSignedPreKey(it.id) }
+
+        Pair(
+            BundleKey(
+                id = signedId,
+                public = Base64Codec.encode(signed.keyPair.publicKey.serialize()),
+                signature = Base64Codec.encode(signed.signature)
+            ),
+            BundleKey(
+                id = kyberId,
+                public = Base64Codec.encode(kyber.keyPair.publicKey.serialize()),
+                signature = Base64Codec.encode(kyber.signature)
+            )
+        )
+    }
 
     /** Establishes a session from a bundle fetched over HTTPS instead of a mesh HELLO. */
     suspend fun processBundleJson(deviceId: String, bundle: PreKeyBundleJson) =
@@ -264,6 +321,56 @@ class CryptoManager(
             }
         }
 
+    // --------------------------------------------------- group sender keys (v2)
+
+    suspend fun createGroupDistribution(myDeviceId: String, distributionId: UUID): ByteArray =
+        withContext(Dispatchers.IO) {
+            senderKeys.createDistribution(
+                SignalProtocolAddress(myDeviceId, CryptoKeys.DEVICE_ID),
+                distributionId
+            )
+        }
+
+    suspend fun encryptSkdmForPeer(serializedSkdm: ByteArray, peerDeviceId: String): Pair<Int, ByteArray> =
+        withContext(Dispatchers.IO) {
+            senderKeys.encryptSkdmForPeer(
+                serializedSkdm,
+                SignalProtocolAddress(peerDeviceId, CryptoKeys.DEVICE_ID)
+            )
+        }
+
+    suspend fun decryptAndProcessSkdmFromPeer(
+        senderDeviceId: String,
+        cipherType: Int,
+        ciphertext: ByteArray
+    ) = withContext(Dispatchers.IO) {
+        senderKeys.decryptAndProcessSkdmFromPeer(
+            SignalProtocolAddress(senderDeviceId, CryptoKeys.DEVICE_ID),
+            cipherType,
+            ciphertext
+        )
+    }
+
+    suspend fun encryptGroup(
+        myDeviceId: String,
+        distributionId: UUID,
+        plaintext: ByteArray
+    ): ByteArray = withContext(Dispatchers.IO) {
+        senderKeys.encryptGroupMessage(
+            SignalProtocolAddress(myDeviceId, CryptoKeys.DEVICE_ID),
+            distributionId,
+            plaintext
+        )
+    }
+
+    suspend fun decryptGroup(senderDeviceId: String, ciphertext: ByteArray): ByteArray =
+        withContext(Dispatchers.IO) {
+            senderKeys.decryptGroupMessage(
+                SignalProtocolAddress(senderDeviceId, CryptoKeys.DEVICE_ID),
+                ciphertext
+            )
+        }
+
     // -------------------------------------------------------------- identities
 
     suspend fun myIdentityKey(): IdentityKey = withContext(Dispatchers.IO) {
@@ -294,6 +401,25 @@ class CryptoManager(
             fingerprint.displayableFingerprint.displayText
         }
 
+    /** Computes a 60-digit safety number against an explicit Base64 peer device identity key. */
+    suspend fun safetyNumberForIdentityKey(
+        remoteDeviceId: String,
+        remoteIdentityKeyBase64: String,
+        localDeviceId: String
+    ): String? = withContext(Dispatchers.IO) {
+        val local = runCatching { store.getIdentityKeyPair() }.getOrNull() ?: return@withContext null
+        val remote = runCatching { IdentityKey(Base64Codec.decode(remoteIdentityKeyBase64)) }
+            .getOrNull() ?: return@withContext null
+        val generator = NumericFingerprintGenerator(CryptoKeys.SAFETY_NUMBER_ITERATIONS)
+        generator.createFor(
+            CryptoKeys.SAFETY_NUMBER_VERSION,
+            localDeviceId.toByteArray(Charsets.UTF_8),
+            local.publicKey,
+            remoteDeviceId.toByteArray(Charsets.UTF_8),
+            remote
+        ).displayableFingerprint.displayText
+    }
+
     /** Drops the session and stored identity for a peer, so a new identity can be trusted. */
     suspend fun forgetIdentity(deviceId: String) = withContext(Dispatchers.IO) {
         standaloneForget(deviceId)
@@ -307,6 +433,8 @@ class CryptoManager(
     suspend fun wipeAllKeys() = withContext(Dispatchers.IO) {
         dao.deleteAllSessions()
         dao.deleteAllIdentities()
+        dao.deleteAllSenderKeys()
+        db.groupSkdmDao().clear()
         kv.deleteAll()
         db.contactDao().deleteAll()
     }

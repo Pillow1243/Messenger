@@ -62,6 +62,7 @@ class ContactRepository(
         }.getOrNull() ?: return null
         if (identityKeyBytes.size != 33) return null
         val existing = dao.getByDeviceId(payload.deviceId)
+        val knownUserId = existing?.userId ?: db.peerDao().deviceByDeviceId(payload.deviceId)?.userId
         val entity = ContactEntity(
             deviceId = payload.deviceId,
             displayName = payload.name.ifBlank { payload.deviceId.take(8) },
@@ -70,7 +71,9 @@ class ContactRepository(
             verified = true,
             identityChanged = existing != null && existing.identityKeyBase64 != payload.identityKey,
             addedAt = existing?.addedAt ?: System.currentTimeMillis(),
-            lastSeenAt = existing?.lastSeenAt ?: 0L
+            lastSeenAt = existing?.lastSeenAt ?: 0L,
+            userId = knownUserId,
+            username = existing?.username ?: ""
         )
         dao.upsert(entity)
         // Pinning a new identity invalidates any session built on the previous one.
@@ -90,6 +93,7 @@ class ContactRepository(
             Base64.encodeToString(it.serialize(), Base64.NO_WRAP)
         } ?: ""
         val existing = dao.getByDeviceId(deviceId)
+        val knownUserId = existing?.userId ?: db.peerDao().deviceByDeviceId(deviceId)?.userId
         val changed = existing != null &&
             existing.identityKeyBase64.isNotEmpty() &&
             identityBase64.isNotEmpty() &&
@@ -106,7 +110,9 @@ class ContactRepository(
                 verified = if (changed) false else (existing?.verified ?: false),
                 identityChanged = changed || (existing?.identityChanged ?: false),
                 addedAt = existing?.addedAt ?: System.currentTimeMillis(),
-                lastSeenAt = System.currentTimeMillis()
+                lastSeenAt = System.currentTimeMillis(),
+                userId = knownUserId,
+                username = existing?.username ?: ""
             )
         )
     }

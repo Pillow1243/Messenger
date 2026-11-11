@@ -44,8 +44,8 @@ android {
         applicationId = "com.offlinemesh.messenger"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "3.0.0"
+        versionCode = 4
+        versionName = "3.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -57,8 +57,21 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
 
+        val firebaseAppId = (findProperty("firebaseAppId") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("FIREBASE_APP_ID")?.takeIf { it.isNotBlank() } ?: ""
+        val firebaseApiKey = (findProperty("firebaseApiKey") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("FIREBASE_API_KEY")?.takeIf { it.isNotBlank() } ?: ""
+        val firebaseProjectId = (findProperty("firebaseProjectId") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("FIREBASE_PROJECT_ID")?.takeIf { it.isNotBlank() } ?: ""
+        val firebaseSenderId = (findProperty("firebaseSenderId") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("FIREBASE_SENDER_ID")?.takeIf { it.isNotBlank() } ?: ""
+
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_API_KEY", "\"$supabaseKey\"")
+        buildConfigField("String", "FIREBASE_APP_ID", "\"$firebaseAppId\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"$firebaseApiKey\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"$firebaseProjectId\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"$firebaseSenderId\"")
         // Kept for the settings screen: the app now has a network path, but the mesh remains
         // fully functional with no connectivity at all.
         buildConfigField("boolean", "OFFLINE_ONLY", "false")
@@ -87,10 +100,11 @@ android {
             buildConfigField("String", "BUILD_CHANNEL", "\"debug\"")
         }
         release {
-            // R8 stays off until the app has been validated on physical devices with a shrunk
-            // build: libsignal's JNI bridge resolves Java symbols by name at runtime.
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 shrinking & obfuscation enabled with explicit JNI keep rules in proguard-rules.pro
+            // covering libsignal (@CalledFromNative + SignalStore + rustls), WebRTC, SQLCipher,
+            // Room, kotlinx.serialization, and Firebase Messaging.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -223,6 +237,7 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Transport 1: Google Nearby Connections (BLE + Wi-Fi Direct, no internet needed).
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
@@ -232,8 +247,14 @@ dependencies {
     // versa, and so every request/response is explicit and auditable.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Cryptography: official Signal Protocol implementation (PQXDH + Double Ratchet).
+    // Cryptography: official Signal Protocol implementation (PQXDH + Double Ratchet + Sender Keys).
     implementation("org.signal:libsignal-android:0.86.5")
+
+    // 1:1 Voice & Video Calling: maintained Android WebRTC library.
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
+
+    // Production remote push wakeup transport (zero-plaintext data messages).
+    implementation("com.google.firebase:firebase-messaging:24.0.3")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -244,6 +265,9 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Desktop JNI native library so JVM unit tests exercise real libsignal Rust cryptography.
+    testRuntimeOnly("org.signal:libsignal-client:0.86.5")
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

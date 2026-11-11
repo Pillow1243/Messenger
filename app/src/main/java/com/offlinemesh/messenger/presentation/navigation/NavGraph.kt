@@ -32,6 +32,7 @@ import androidx.navigation.navArgument
 import com.offlinemesh.messenger.R
 import com.offlinemesh.messenger.presentation.AppViewModel
 import com.offlinemesh.messenger.presentation.screens.AccountScreen
+import com.offlinemesh.messenger.presentation.screens.CallOverlay
 import com.offlinemesh.messenger.presentation.screens.ChannelsScreen
 import com.offlinemesh.messenger.presentation.screens.ChatScreen
 import com.offlinemesh.messenger.presentation.screens.ChatsScreen
@@ -109,6 +110,7 @@ fun NavGraph(
     val currentRoute = backStackEntry?.destination?.route
     val showBottomBar = bottomItems.any { it.route == currentRoute }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
@@ -222,6 +224,8 @@ fun NavGraph(
                 )
             }
         }
+    }
+    CallOverlay(vm = vm)
     }
 }
 

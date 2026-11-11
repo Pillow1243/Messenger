@@ -253,6 +253,57 @@ fun ContactDetailScreen(
                 InfoRow(label = "Device", value = deviceId, mono = true)
             }
 
+            val linkedUserId = contact?.userId
+            if (!linkedUserId.isNullOrBlank()) {
+                val peerDevices by vm.observePeerDevices(linkedUserId)
+                    .collectAsStateWithLifecycle(initialValue = emptyList())
+                LaunchedEffect(linkedUserId) {
+                    vm.refreshPeerDevices(linkedUserId)
+                }
+                if (peerDevices.isNotEmpty()) {
+                    SectionCard(title = stringResource(R.string.peer_devices_title)) {
+                        peerDevices.forEach { dev ->
+                            var devSafety by remember(dev.id, dev.identityKey) { mutableStateOf("") }
+                            LaunchedEffect(dev.id, dev.identityKey) {
+                                devSafety = vm.deviceSafetyNumber(dev.deviceId, dev.identityKey).orEmpty()
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = dev.name.ifBlank { dev.deviceId.take(12) } +
+                                            if (dev.revoked) " (${stringResource(R.string.device_revoked_badge)})" else "",
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                    TextButton(
+                                        onClick = { vm.setPeerDeviceVerified(dev.id, !dev.verified) }
+                                    ) {
+                                        Text(
+                                            if (dev.verified) stringResource(R.string.verified)
+                                            else stringResource(R.string.mark_verified)
+                                        )
+                                    }
+                                }
+                                if (devSafety.isNotBlank()) {
+                                    Text(
+                                        text = devSafety.chunked(5).joinToString(" "),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
             Column(
                 modifier = Modifier
@@ -274,6 +325,21 @@ fun ContactDetailScreen(
                     Icon(Icons.Filled.Shield, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.size(8.dp))
                     Text(stringResource(R.string.mark_verified))
+                }
+
+                if (!linkedUserId.isNullOrBlank() && vm.isOnlineSignedIn) {
+                    val blocked by vm.blockedUsers.collectAsStateWithLifecycle()
+                    val isBlocked = blocked.contains(linkedUserId)
+                    OutlinedButton(
+                        onClick = { vm.toggleBlockUser(linkedUserId) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (isBlocked) stringResource(R.string.unblock_user)
+                            else stringResource(R.string.block_user),
+                            color = if (isBlocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
 
                 TextButton(

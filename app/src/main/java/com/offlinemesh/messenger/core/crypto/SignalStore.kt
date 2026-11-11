@@ -5,6 +5,7 @@ import com.offlinemesh.messenger.core.db.AppDatabase
 import com.offlinemesh.messenger.core.db.IdentityEntity
 import com.offlinemesh.messenger.core.db.KyberPreKeyEntity
 import com.offlinemesh.messenger.core.db.PreKeyEntity
+import com.offlinemesh.messenger.core.db.SenderKeyEntity
 import com.offlinemesh.messenger.core.db.SessionEntity
 import com.offlinemesh.messenger.core.db.SignedPreKeyEntity
 import org.signal.libsignal.protocol.IdentityKey
@@ -199,18 +200,32 @@ class SignalStore(private val db: AppDatabase) : SignalProtocolStore {
         kv.put(com.offlinemesh.messenger.core.db.KeyValueEntity(fingerprint, "1"))
     }
 
-    // ------------------------------------------------------ sender-key (unused)
+    // --------------------------------------------------------- sender-key store
 
     override fun storeSenderKey(
         sender: SignalProtocolAddress,
         distributionId: UUID,
         record: SenderKeyRecord
     ) {
-        throw UnsupportedOperationException("Group chats use pairwise fan-out, not sender keys")
+        dao.putSenderKey(
+            SenderKeyEntity(
+                remoteName = sender.name,
+                deviceId = sender.deviceId,
+                distributionId = distributionId.toString(),
+                recordBase64 = encode(record.serialize())
+            )
+        )
     }
 
     override fun loadSenderKey(sender: SignalProtocolAddress, distributionId: UUID): SenderKeyRecord? {
-        throw UnsupportedOperationException("Group chats use pairwise fan-out, not sender keys")
+        val stored = dao.getSenderKey(sender.name, sender.deviceId, distributionId.toString())
+            ?: return null
+        // Always construct a fresh SenderKeyRecord copy from serialized bytes per libsignal contract.
+        return runCatching { SenderKeyRecord(decode(stored.recordBase64)) }.getOrNull()
+    }
+
+    fun forgetDistribution(distributionId: String) {
+        dao.deleteSenderKeysForDistribution(distributionId)
     }
 
     // ------------------------------------------------------------------ helpers

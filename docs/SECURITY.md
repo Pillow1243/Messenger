@@ -14,7 +14,8 @@ is implemented in this repository; anything not implemented is called out explic
 | Database passphrase | Android Keystore | 32 random bytes wrapped by a non-exportable AES-GCM key (`mesh_db_kek_v1`) |
 | Auth session (access + refresh token) | `SecretStore` (`messenger_auth_v1`) | AES-GCM under a Keystore key (`<name>.kek`) |
 | Pre-key bundle of a peer | Server + local cache | Public data only |
-| Attachment bytes | Device only today | Optional hash (`plaintext_sha256`) is stored when a transfer completes |
+| Attachment bytes | Private `mm-media` bucket (ciphertext only) + sealed local `FileVault` | Streaming AES-256-GCM with ephemeral 256-bit key + 96-bit IV carried inside the Signal envelope; SHA-256 verified before and after decryption |
+| Group Sender Keys (`v2`) | Device only (`signal_sender_keys`, SQLCipher) | `libsignal` `SenderKeyRecord`; rotated (`sender_key_epoch++`, new `distribution_id`) on member removal or device revocation |
 
 The server never receives plaintext, plaintext-derived search indexes, contact graphs in clear or
 message metadata beyond what routing requires (`sender_id`, `conversation_id`, `sent_at_ms`,
@@ -34,9 +35,24 @@ message metadata beyond what routing requires (`sender_id`, `conversation_id`, `
 * **Identity changes are fatal for the session, not silent.** `IdentityChangedException` aborts the
   send and marks the message failed; the UI surfaces it and only an explicit
   "reset trust" action re-establishes.
-* **Group messaging** is per-device fan-out: each member device gets its own ciphertext envelope.
-  This is weaker than Sender Keys for very large groups (O(n) ciphertexts, no sender-key rotation
-  semantics) and is documented as a limitation, not hidden.
+* **Group messaging** uses explicit protocol versioning:
+  * `encryption_version = 2` (default for new groups and one-tap upgradeable for legacy groups):
+    audited `libsignal` **Signal Sender Keys** (`GroupSessionBuilder`, `GroupCipher`,
+    `SenderKeyDistributionMessage`). Each sender distributes its `SenderKeyDistributionMessage`
+    pairwise-encrypted via `SessionCipher` to current non-revoked member devices, then encrypts
+    group messages in O(1). Removing a member or revoking any member's device atomically increments
+    `sender_key_epoch` and rotates `distribution_id` on the server so removed members and revoked
+    devices cannot decrypt future messages.
+  * `encryption_version = 1`: legacy pairwise per-device fan-out preserved for backward
+    compatibility until upgraded.
+* **Online media encryption**: attachments are encrypted on-device in 64 KiB streaming chunks via
+  `MediaCipher` (`AES/GCM/NoPadding`, random 256-bit key, 96-bit IV, 128-bit tag) before upload to
+  private Storage (`mm-media`) using resumable TUS/POST uploads and short-lived signed URLs. The
+  ephemeral key, IV, plaintext SHA-256, ciphertext SHA-256, filename, MIME type, dimensions, and
+  thumbnail travel exclusively inside `OnlinePayloadCodec` within the Signal/SenderKey ciphertext.
+* **Push wakeups**: `mm-push-dispatch` and `PushWakeupPolicy` enforce zero-plaintext data-only
+  wakeups (`mm_wakeup`). Any payload containing forbidden plaintext/key fields is rejected on both
+  server and client; notifications are rendered only after local SQLCipher + libsignal decryption.
 * **Replay and duplication**: received messages are keyed by server id (`remoteId`) and by
   `clientMsgId`; an envelope that has already been ingested is deleted from the server without
   being processed again. Mesh packets carry ids and are de-duplicated by the seen-packet cache.
@@ -88,14 +104,15 @@ are observable at send time; the decision is pure and unit-tested. Rules:
 
 The mesh never consults Supabase, and losing the network never disables a radio.
 
-## 6. Deliberate limitations (not hidden)
+## 6. Operational notes & external credentials
 
-* **Media over the online transport is not enabled.** The storage bucket and RLS exist, but the
-  upload path is not wired into the send flow; `ChatRepository` marks such a send as queued with
-  `media_online_unsupported` instead of pretending it worked. Mesh file transfer is unchanged.
-* **Group encryption uses per-device fan-out**, not Sender Keys.
 * **Search is local**: the server cannot search ciphertext, and no plaintext index is uploaded.
-* **The block/report UI** exists only as backend calls; there is no dedicated screen yet.
-* **Calls are not implemented.** No WebRTC stack, no signalling table usage in the app, and no
-  button that would fake a call.
+* **1:1 WebRTC voice & video calling** uses `io.getstream:stream-webrtc-android` (DTLS-SRTP) with
+  authenticated signaling over `mm_calls` / `mm_call_signals` and short-lived TURN credentials from
+  `mm-turn-credentials`. Group calls are intentionally disabled at both UI and database RPC layers.
+  Without owner-supplied TURN secrets (`docs/OWNER_SETUP.md`), calls operate in direct P2P / STUN
+  mode and surface that status in the call UI.
+* **Background FCM push wakeups** require owner Firebase credentials (`FCM_SERVICE_ACCOUNT_JSON` on
+  Supabase + Firebase client options at build time; see `docs/OWNER_SETUP.md`). Without them, the
+  app honestly reports `UNCONFIGURED` and relies on Realtime + periodic `SyncWorker` backfill.
 * **Telemetry is opt-in by absence**: nothing is collected, no analytics SDK is bundled.

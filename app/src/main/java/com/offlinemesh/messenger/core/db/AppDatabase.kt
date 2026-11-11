@@ -22,7 +22,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OutboxEntity::class,
         SyncStateEntity::class,
         PeerDeviceEntity::class,
-        PeerProfileEntity::class
+        PeerProfileEntity::class,
+        SenderKeyEntity::class,
+        GroupSkdmStateEntity::class,
+        CallLogEntity::class
     ],
     version = DatabaseVersion.CURRENT,
     exportSchema = true
@@ -39,10 +42,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun outboxDao(): OutboxDao
     abstract fun syncStateDao(): SyncStateDao
     abstract fun peerDao(): PeerDao
+    abstract fun groupSkdmDao(): GroupSkdmDao
+    abstract fun callLogDao(): CallLogDao
 }
 
 object DatabaseVersion {
-    const val CURRENT = 2
+    const val CURRENT = 3
 }
 
 /**
@@ -118,5 +123,74 @@ internal val MIGRATION_1_2_STATEMENTS: List<String> = listOf(
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
         MIGRATION_1_2_STATEMENTS.forEach(db::execSQL)
+    }
+}
+
+/**
+ * Version 2 -> 3: Phase 2 production hardening.
+ *
+ * Purely additive upgrade adding:
+ * - explicit group encryption protocol versioning (`encryptionVersion` default 1 so existing chats
+ *   stay on pairwise fan-out unless upgraded; `senderKeyEpoch`, `distributionId`), timed mute, and role
+ * - streaming E2EE attachment metadata, encrypted preview thumbnail, dimensions, and resumable transfer state
+ * - per-device metadata (`name`, `platform`, `verified`) on `peer_devices`
+ * - `signal_sender_keys`, `group_skdm_states`, and `call_logs` tables
+ */
+internal val MIGRATION_2_3_STATEMENTS: List<String> = listOf(
+    "ALTER TABLE conversations ADD COLUMN encryptionVersion INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE conversations ADD COLUMN senderKeyEpoch INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE conversations ADD COLUMN distributionId TEXT DEFAULT NULL",
+    "ALTER TABLE conversations ADD COLUMN mutedUntil INTEGER DEFAULT NULL",
+    "ALTER TABLE conversations ADD COLUMN myRole TEXT NOT NULL DEFAULT 'member'",
+    "ALTER TABLE messages ADD COLUMN fileMime TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN fileSha256 TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE messages ADD COLUMN attachmentRemoteId TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN remoteObjectPath TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN mediaKeyBase64 TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN mediaIvBase64 TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN cipherSha256 TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN cipherSize INTEGER DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN thumbnailBase64 TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN mediaWidth INTEGER DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN mediaHeight INTEGER DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN transferState TEXT DEFAULT NULL",
+    "ALTER TABLE messages ADD COLUMN transferBytes INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_devices ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE peer_devices ADD COLUMN platform TEXT NOT NULL DEFAULT 'android'",
+    "ALTER TABLE peer_devices ADD COLUMN verified INTEGER NOT NULL DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS signal_sender_keys (" +
+        "remoteName TEXT NOT NULL, " +
+        "deviceId INTEGER NOT NULL, " +
+        "distributionId TEXT NOT NULL, " +
+        "recordBase64 TEXT NOT NULL, " +
+        "PRIMARY KEY(remoteName, deviceId, distributionId))",
+    "CREATE TABLE IF NOT EXISTS group_skdm_states (" +
+        "conversationId TEXT NOT NULL, " +
+        "epoch INTEGER NOT NULL, " +
+        "distributionId TEXT NOT NULL, " +
+        "recipientDeviceRowId TEXT NOT NULL, " +
+        "sentAt INTEGER NOT NULL, " +
+        "PRIMARY KEY(conversationId, epoch, recipientDeviceRowId))",
+    "CREATE INDEX IF NOT EXISTS index_group_skdm_states_conversationId ON group_skdm_states (conversationId)",
+    "CREATE TABLE IF NOT EXISTS call_logs (" +
+        "callId TEXT NOT NULL PRIMARY KEY, " +
+        "conversationId TEXT NOT NULL, " +
+        "peerUserId TEXT NOT NULL, " +
+        "peerName TEXT NOT NULL, " +
+        "kind TEXT NOT NULL, " +
+        "direction TEXT NOT NULL, " +
+        "state TEXT NOT NULL, " +
+        "startedAt INTEGER NOT NULL, " +
+        "answeredAt INTEGER, " +
+        "endedAt INTEGER, " +
+        "durationSec INTEGER NOT NULL)"
+    ,
+    "CREATE INDEX IF NOT EXISTS index_call_logs_conversationId ON call_logs (conversationId)",
+    "CREATE INDEX IF NOT EXISTS index_call_logs_startedAt ON call_logs (startedAt)"
+)
+
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        MIGRATION_2_3_STATEMENTS.forEach(db::execSQL)
     }
 }
