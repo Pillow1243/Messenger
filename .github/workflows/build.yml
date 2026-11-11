@@ -84,9 +84,11 @@ jobs:
       - name: Extract the interesting part of the log
         if: failure()
         run: |
-          grep -aE "^(e|w): |^> Task .* FAILED|error:|What went wrong|Caused by:|Execution failed|Could not (resolve|find|download)|FAILURE" build.log | head -300 > diag.txt || true
+          grep -aE "^(e|w): |^> Task .* FAILED|error:|What went wrong|Caused by:|Execution failed|Could not (resolve|find|download)|FAILURE" build.log | head -200 > diag.txt || true
+          echo "--- failing unit tests ---" >> diag.txt
+          grep -h -a -A 4 "<failure" app/build/test-results/testDebugUnitTest/*.xml 2>/dev/null | head -150 >> diag.txt || true
           if [ ! -s diag.txt ]; then tail -c 20000 build.log > diag.txt; fi
-          head -60 diag.txt
+          head -120 diag.txt
 
       - name: Mirror diagnostics into a commit comment
         if: failure()
