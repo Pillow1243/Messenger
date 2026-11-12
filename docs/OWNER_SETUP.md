@@ -120,8 +120,8 @@ supabase functions deploy mm-turn-credentials
 supabase functions deploy mm-push-dispatch
 ```
 
-If `supabase db push` lists more than those two files (the live history was written through the
-dashboard, so its version numbers may not match the file names), do not force it: paste the two
+If `supabase db push` lists more than those two files (the version numbers recorded in the live
+history may not match the file names), do not force it: paste the two
 files into the SQL editor instead, one after the other. Re-running any Messenger migration is safe.
 
 Verify afterwards (read-only, from the SQL editor or `psql`):
