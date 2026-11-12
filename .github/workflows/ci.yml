@@ -372,6 +372,9 @@ jobs:
           failures=$(sum_attr failures)
           tests=$(sum_attr tests)
           echo "instrumentation: ${tests} tests, ${failures} failures/errors"
+          # A notice makes the count visible from the checks API, which is the evidence that the
+          # suite really executed rather than being skipped.
+          echo "::notice title=Instrumentation::${tests} tests ran on the emulator, ${failures} failures"
           if [ "${failures:-1}" -gt 0 ] || [ "${tests:-0}" -eq 0 ]; then
             grep -h -A3 '<failure\|<error' "${results[@]}" | head -40 |
               while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done

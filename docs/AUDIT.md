@@ -25,7 +25,7 @@ branch, not locally (see A.5).
 | S-4 | **Medium** | **Fixed** (`_shared/rate_limit.ts`, `20261112070000`) | The rate-limit blocks in `mm-push-dispatch` and `mm-turn-credentials` wrote into `mm_rate_limits` with columns that do not exist (`user_id`, `bucket`, `count` vs `subject`, `action`, `window_start`, `hits`) and discarded the error, so **neither function was throttled** despite documenting a limit. Replaced with an atomic `mm_consume_rate_limit_as()` (service-role only, allow-listed actions) that fails closed; `mm-account-delete` gains a limit too. |
 | D-1 | Medium | **Fixed** (earlier pass) | Documentation drift (README/ARCHITECTURE/SUPABASE/OWNER_SETUP vs the code). |
 | D-2 | Low | **Fixed** (earlier pass) | Release signing secret names did not match `release.yml`. |
-| T-1 | Medium | **Improved, still open** | 15 JVM test classes exist and run in CI. No Android instrumentation tests exist (unchanged). The Supabase suites now run in CI on a disposable database, which closes the "only by hand" part. |
+| T-1 | Medium | **Partly fixed** | 15 JVM test classes run in CI, and the first **Android instrumentation tests** now run in CI on a KVM-accelerated emulator: the SQLCipher database file is asserted to have no SQLite header and no plaintext canary, the Keystore-wrapped passphrase survives close/reopen, and the schema contains the expected tables. Still missing: navigation, notification and migration instrumentation tests. |
 | T-2 | Medium | **Open** | No physical two-device validation of the current build. Requires the owner's phones; the validation pack is in [`TWO_DEVICE_VALIDATION.md`](TWO_DEVICE_VALIDATION.md). |
 | T-3 | Low | **Fixed** | No automated check that the English and Persian resource files cover the same keys, and no check that every declared dependency has a licence entry. Both are now CI steps (`tools/check_string_parity.sh`, `tools/license_inventory.py`). |
 | B-1 | Medium | **Resolved for this milestone** | Android compilation, unit tests, lint, debug/demo packaging and the Room schema check cannot run in the audit sandbox (no JDK, no Android SDK, no Maven/Gradle network). They run on GitHub Actions; this branch's `CI` run is the build evidence, and the backend work was verified locally against real PostgreSQL. |
@@ -69,7 +69,8 @@ branch, not locally (see A.5).
 1. T-2: two-device validation of online media, sync, calls and mesh↔online switching.
 2. L-2: in-app licences screen (SQLCipher BSD notice + AGPL offer), then L-1: the owner's licence
    decision.
-3. T-1: Android instrumentation tests (database, Keystore, navigation, notifications).
+3. T-1: the remaining instrumentation coverage (navigation, notifications, Room migrations);
+   the storage and Keystore cases are already in CI.
 4. F-1: product features, in the order given in `docs/ROADMAP.md` (search filters, pinned messages,
    scheduled/silent messages, disappearing messages, chat folders, then polls/stories).
 5. Group calls once an SFU is provisioned; the 1:1 path is not a substitute.
@@ -173,7 +174,8 @@ QR pairing, EN + FA UI. No online mode, no accounts, no server.
 
 19. Persian translations cover the existing UI, but the app hard-codes some English in
     `Format.kt`-adjacent strings (verified: locale-aware formatting is fine).
-20. No instrumentation tests, no screenshot tests, no macrobenchmark.
+20. Storage and Keystore now have instrumented tests; screenshot tests, macrobenchmark and
+    navigation/notification instrumentation tests do not exist yet.
 21. `README` documents limitations honestly; several are now addressed.
 
 ## 3. What was missing entirely (requested by the mission)

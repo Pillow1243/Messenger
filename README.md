@@ -187,9 +187,9 @@ genuinely open, not because they are hidden. `docs/AUDIT.md` Part A has the full
    [`docs/TWO_DEVICE_VALIDATION.md`](docs/TWO_DEVICE_VALIDATION.md)).
 2. **Group calls are not implemented.** 1:1 WebRTC voice and video are. Group calls require an SFU;
    none is deployed, so no group call button exists.
-3. **No Android instrumentation tests.** The JVM suite and the backend suites are real and run in
-   CI, but there is no emulator-backed suite for database migrations, Keystore behaviour or
-   navigation. Listed in `docs/ROADMAP.md`.
+3. **Instrumentation coverage is partial.** Storage and Keystore have emulator-backed tests in CI
+   (encrypted file at rest, passphrase reuse, schema inventory), but navigation, notifications and
+   Room migrations do not. Listed in `docs/ROADMAP.md`.
 4. **Background service** can still be killed by aggressive OEM power managers.
 5. **Stories, polls, scheduled/silent messages, disappearing messages, chat folders, bots and Mini
    Apps are not implemented.** They are roadmap items in [`docs/ROADMAP.md`](docs/ROADMAP.md), not
@@ -200,15 +200,16 @@ genuinely open, not because they are hidden. `docs/AUDIT.md` Part A has the full
    and the updated Edge Functions are in the repository but must still be pushed to the live
    Supabase project by the owner (`supabase db push` / `supabase functions deploy`). Until then the
    live deployment keeps the old behaviour described in `docs/AUDIT.md`.
-8. **Licence decision outstanding.** `libsignal` is AGPL-3.0; the repository has no `LICENSE` and no
-   in-app attribution screen yet. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+8. **Licence decision outstanding.** `libsignal` is AGPL-3.0 and the repository has no `LICENSE`.
+   The in-app attribution screen now exists (Settings → About → Open-source licences), but choosing
+   the project licence is the owner's decision. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Roadmap
 
 [`docs/ROADMAP.md`](docs/ROADMAP.md) is the maintained list. In short: physical two-device
-validation, an in-app licences screen and the licence decision, Android instrumentation tests, then
-search filters, pinned and scheduled messages, disappearing messages, chat folders, SFU group calls,
-polls and stories.
+validation, the licence decision, the remaining instrumentation coverage, then search filters,
+pinned and scheduled messages, disappearing messages, chat folders, SFU group calls, polls and
+stories.
 
 ## License
 

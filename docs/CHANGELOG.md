@@ -53,6 +53,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions refer
   third-party notices that ship in the build. The asset is generated from `THIRD_PARTY_NOTICES.md`
   by `tools/build_licence_asset.py`, and CI fails if the two drift, so the attribution a user can
   read is always the inventory of the build they are running (SQLCipher's BSD notice included).
+* **Android instrumentation tests in CI** — a KVM-accelerated emulator job runs the first
+  device-level tests: the database file has no SQLite header and no plaintext canary, the
+  Keystore-wrapped passphrase is reused across close/reopen, and the expected tables exist. The job
+  drives the emulator directly (`sdkmanager` → `avdmanager` → boot wait → `connectedDebugAndroidTest`)
+  and turns boot, SDK and JUnit failures into check annotations, so a green run is verifiable.
 * 19 new UI strings in English and Persian.
 
 ### Changed

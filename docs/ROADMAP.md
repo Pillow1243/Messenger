@@ -55,7 +55,7 @@ Status legend: **Done** (shipped and verified) · **Partial** (works, needs the 
 | --- | --- | --- |
 | 15 JVM unit-test classes (mesh, crypto, policy, realtime, formatting) | Done | `./gradlew testDebugUnitTest` |
 | Backend authorisation suites (25 tables, two suites) | Done | run in CI |
-| Android instrumentation tests | Todo | no emulator-backed suite exists yet |
+| Android instrumentation tests | Partial | emulator-backed suite in CI covers SQLCipher at rest, Keystore passphrase reuse and the table inventory; navigation/notification/migration cases remain |
 | Two-device validation of media, sync, calls, mesh↔online switching | Blocked | needs the owner's two physical phones |
 | Background survival under OEM power managers | Partial | WorkManager + foreground service, no OEM-specific tuning |
 | Crash reporting / telemetry | **Deliberately absent** | privacy by design; failures are surfaced in the UI instead |
