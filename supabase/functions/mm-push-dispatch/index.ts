@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { consumeRateLimit } from "../_shared/rate_limit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -146,34 +147,16 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // Per-caller rate limiting (max 90 dispatches per 60 seconds).
   const now = new Date();
-  const bucketKey = `push_dispatch:${callerId}`;
-  const { data: rlRow } = await admin
-    .from("mm_rate_limits")
-    .select("window_start, count")
-    .eq("user_id", callerId)
-    .eq("bucket", "push_dispatch")
-    .maybeSingle();
 
-  if (rlRow) {
-    const ageMs = now.getTime() - new Date(rlRow.window_start).getTime();
-    if (ageMs < 60_000 && rlRow.count >= 90) {
-      return json(429, { error: "rate_limited", bucket: bucketKey });
+  // Per-caller rate limiting (max 90 dispatches per 60 seconds), consumed atomically by
+  // mm_consume_rate_limit_as(). Fails closed if the limiter is unreachable.
+  const limit = await consumeRateLimit(admin, callerId, "push_dispatch", 90, 60);
+  if (!limit.allowed) {
+    if (limit.error === "rate_limited") {
+      return json(429, { error: "rate_limited", bucket: "push_dispatch" });
     }
-    await admin.from("mm_rate_limits").upsert({
-      user_id: callerId,
-      bucket: "push_dispatch",
-      window_start: ageMs < 60_000 ? rlRow.window_start : now.toISOString(),
-      count: ageMs < 60_000 ? rlRow.count + 1 : 1,
-    });
-  } else {
-    await admin.from("mm_rate_limits").insert({
-      user_id: callerId,
-      bucket: "push_dispatch",
-      window_start: now.toISOString(),
-      count: 1,
-    });
+    return json(503, { error: "rate_limiter_unavailable" });
   }
 
   // Verify caller membership & ownership of the referenced message/call.

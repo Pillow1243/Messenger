@@ -635,7 +635,36 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
         app.chats.setStarred(messageId, starred)
     }
 
-    fun starredMessages(): Flow<List<MessageEntity>> = app.database.messageDao().observeStarred()
+    fun starredMessages(): Flow<List<MessageEntity>> = app.chats.observeStarredMessages()
+
+    val archivedConversations: StateFlow<List<ConversationEntity>> =
+        app.chats.observeArchivedConversations()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val archivedCount: StateFlow<Int> =
+        app.chats.observeArchivedCount()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun setConversationArchived(conversationId: String, archived: Boolean) = viewModelScope.launch {
+        if (!app.chats.setConversationArchived(conversationId, archived)) {
+            _error.value = "error_unknown"
+        }
+    }
+
+    /** Removes a message from this device only (the peer keeps its copy). */
+    fun deleteForMe(messageId: String) = viewModelScope.launch {
+        if (!app.chats.deleteForMe(messageId)) _error.value = "error_unknown"
+    }
+
+    /**
+     * Forwards a message into another chat. Returns nothing to the caller: the target chat's
+     * message list is a database flow, so the new message appears there as soon as it is queued.
+     */
+    fun forwardMessage(messageId: String, targetConversationId: String) = viewModelScope.launch {
+        if (!app.chats.forwardMessage(messageId, targetConversationId)) {
+            _error.value = "forward_unavailable"
+        }
+    }
 
     // ------------------------------------------------------------------------ misc
 

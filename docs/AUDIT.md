@@ -7,66 +7,86 @@ is stated in Part A where it still matters.
 
 ---
 
-## Part A — Current findings (2026-11-12)
+## Part A — Current findings (2026-11-12, second pass)
 
-Method: the source tree at `25e6564` (`main`), the five committed migrations, the three Edge
-Function sources, the CI workflows, and the **live** Supabase project `lnhmbjqjfrnqkpsjpszb`
-(read-only queries plus rolled-back probes). Limits of this audit are listed in section A.5.
+Method: the source tree on this branch, every migration, the three Edge Function sources, the CI
+workflows, and — because the audit environment has no route to `supabase.co` — a **real PostgreSQL 16
+instance** loaded with the Supabase platform stub (`supabase/tests/local/`), all migrations, and both
+authorisation suites. Android compilation and unit tests were executed by GitHub Actions on this
+branch, not locally (see A.5).
 
 ### A.1 Findings by severity
 
 | ID | Severity | Status | Finding |
 | --- | --- | --- | --- |
-| S-1 | **High** | **Fixed** (migration `20261112035022`) | Every `mm_*` function was EXECUTE-able by `anon`, and `mm_claim_prekey_bundle` returned a one-time pre-key to an anonymous caller. Its ownership check evaluated to NULL when `auth.uid()` was null. Confirmed with a probe as the `anon` role; after the fix the same probe fails with `permission denied`, and the owner's signed-in claim still works. |
-| S-2 | Medium | **Open** | Social-graph helpers `mm_is_member(conv, user)`, `mm_shares_conversation(a, b)` and `mm_is_blocked(a, b)` are `SECURITY DEFINER` and accept arbitrary ids. Any signed-in user can learn whether two other users share a conversation or have blocked each other. Acceptance: callers may only ask about their own id, or the function returns false; RLS and RPC tests still pass. Blocked on a test-first change because the helpers back RLS policies. |
-| S-3 | Low | Open | `mm-account-delete`, `mm-turn-credentials` and `mm-push-dispatch` are deployed with `verify_jwt = false`. Each validates the caller with `auth.getUser()` first, so this is not an open door, but it is a weaker posture than the gateway check. Acceptance: enable `verify_jwt` after a staging test confirms the app's requests still pass. |
-| D-1 | Medium | **Fixed in this change** | Documentation drift. README claimed calls, online media and Sender Keys were missing; ARCHITECTURE said Room v2; SUPABASE listed 21 tables, a non-existent `mm_signing_keys`, and a non-existent `mm-attachments` bucket; OWNER_SETUP named secrets the release workflow does not read. Corrected from the source and the live project. |
-| D-2 | Low | **Fixed in this change** | Release signing secret names in README and OWNER_SETUP did not match `release.yml`; README said the release published an AAB, but the workflow builds only an APK. |
-| T-1 | Medium | Open | Test coverage: 15 JVM test classes. No Android instrumentation tests exist. The Supabase suite runs only by hand, not in CI. The authorization fix in S-1 has assertions in the suite but was not re-run after the edit (see `SUPABASE.md`, Tests). |
-| T-2 | Medium | Open | No physical-device validation has been performed for the current release. `TWO_DEVICE_VALIDATION.md` lists what has to be run; none of it is recorded as passed here. |
-| B-1 | Low | Open | Build could not be executed in the audit sandbox (no JDK, no Gradle distribution, no Maven access). Kotlin source was not modified in this change; the CI run of this branch is the build evidence. |
-| L-1 | Medium | Open (owner decision) | `libsignal-android` is AGPL-3.0. Distributing a binary that includes it carries AGPL obligations. The project has no `LICENSE` file and no third-party notice file. The owner must choose the licensing model; this repository does not choose one. |
-| F-1 | — | Not implemented | Group calls (need an SFU), stories, polls, scheduled and silent messages, bots and Mini Apps. These are roadmap items, documented as such in the README. |
+| S-1 | **High** | **Fixed** (`20261112035022`) | Every `mm_*` function was EXECUTE-able by `anon`, and `mm_claim_prekey_bundle` returned a one-time pre-key to an anonymous caller because its ownership check evaluated to NULL when `auth.uid()` was null. |
+| S-2 | **High** (raised from Medium) | **Fixed** (`20261112070000`) | `mm_is_member`, `mm_role`, `mm_is_admin`, `mm_can_post`, `mm_shares_conversation`, `mm_is_blocked` and `mm_is_call_participant` accepted arbitrary identifiers and were executable by every signed-in user, so any account could enumerate who shares a conversation with whom, group roles, posting rights, block relationships and call participation through PostgREST — without touching a message. Severity raised to High: this is a social-graph disclosure primitive that affects every user, not a theoretical leak. Fix: implementations in the non-exposed `mm_private` schema + caller-scoped public wrappers, with a dedicated negative suite. The suite fails on a pre-fix database at the first enumeration assertion and passes afterwards. |
+| S-3 | Low | **Fixed** (`supabase/config.toml`) | The three Edge Functions were deployed with `verify_jwt = false`; the gateway accepted anonymous requests and only the in-body `auth.getUser()` stood in the way. Now `verify_jwt = true` in the repository's function configuration, with the in-body authorisation kept as the second layer. |
+| S-4 | **Medium** | **Fixed** (`_shared/rate_limit.ts`, `20261112070000`) | The rate-limit blocks in `mm-push-dispatch` and `mm-turn-credentials` wrote into `mm_rate_limits` with columns that do not exist (`user_id`, `bucket`, `count` vs `subject`, `action`, `window_start`, `hits`) and discarded the error, so **neither function was throttled** despite documenting a limit. Replaced with an atomic `mm_consume_rate_limit_as()` (service-role only, allow-listed actions) that fails closed; `mm-account-delete` gains a limit too. |
+| D-1 | Medium | **Fixed** (earlier pass) | Documentation drift (README/ARCHITECTURE/SUPABASE/OWNER_SETUP vs the code). |
+| D-2 | Low | **Fixed** (earlier pass) | Release signing secret names did not match `release.yml`. |
+| T-1 | Medium | **Partly fixed** | 15 JVM test classes run in CI, and the first **Android instrumentation tests** now run in CI on a KVM-accelerated emulator: the SQLCipher database file is asserted to have no SQLite header and no plaintext canary, the Keystore-wrapped passphrase survives close/reopen, and the schema contains the expected tables. Still missing: navigation, notification and migration instrumentation tests. |
+| T-2 | Medium | **Open** | No physical two-device validation of the current build. Requires the owner's phones; the validation pack is in [`TWO_DEVICE_VALIDATION.md`](TWO_DEVICE_VALIDATION.md). |
+| T-3 | Low | **Fixed** | No automated check that the English and Persian resource files cover the same keys, and no check that every declared dependency has a licence entry. Both are now CI steps (`tools/check_string_parity.sh`, `tools/license_inventory.py`). |
+| B-1 | Medium | **Resolved for this milestone** | Android compilation, unit tests, lint, debug/demo packaging and the Room schema check cannot run in the audit sandbox (no JDK, no Android SDK, no Maven/Gradle network). They run on GitHub Actions; this branch's `CI` run is the build evidence, and the backend work was verified locally against real PostgreSQL. |
+| L-1 | Medium | **Analysed, owner decision open** | `libsignal-android` is AGPL-3.0 and is linked into the APK. `THIRD_PARTY_NOTICES.md` now contains the full inventory, the obligations, and the decisions the owner must take. No licence was chosen on the owner's behalf. |
+| L-2 | Medium | **Open** | There is no in-app licences/attribution screen, so the SQLCipher BSD notice and the AGPL offer are only satisfied by the repository documents. Required before public distribution; tracked in `docs/ROADMAP.md`. |
+| F-1 | — | Not implemented | Group calls (need an SFU), stories, polls, scheduled/silent messages, bots and Mini Apps, search filters, pinned messages, disappearing messages, chat folders. Listed honestly in `docs/ROADMAP.md`. |
 
 ### A.2 Verified as correct (no change needed)
 
 * Release signing refuses to publish a debug-signed artefact: `release.yml` requires all four
-  secrets, and its last step rejects a certificate whose subject is `CN=Android Debug`.
-* The release build is R8-minified (`isMinifyEnabled = true`). CI's demo build is also a release-type
-  build with R8, so R8 runs on every push; the earlier claim that R8 was off is stale.
-* The Room schema is exported (`app/schemas`), and CI fails on schema drift.
-* All 25 `mm_*` tables have RLS enabled; the live project has no `mm-media` public access.
+  secrets and rejects a certificate whose subject is `CN=Android Debug`.
+* The release build is R8-minified; the demo build is a release-type build, so R8 runs on every push.
+* The Room schema is exported (`app/schemas`) and CI fails on schema drift.
+* All 25 `mm_*` tables have RLS enabled; only `mm_rate_limits` and `mm_push_log` have no policy, and
+  both are internal bookkeeping (deny-all for API roles). This is now asserted, not assumed.
 * The `mm-account-delete`, `mm-turn-credentials` and `mm-push-dispatch` sources validate the caller
-  before acting, and the service-role key is read only from the function environment.
-* The live migration history contains the five repository migrations (`mm_identity_graph` …
-  `mm_phase2_*`) plus the hotfix. The `luma_*` objects belong to another application and were not
-  touched.
+  before acting; the service-role key is read only from the function environment and never shipped.
+* `mm-claim_prekey_bundle` is single-use and refuses anonymous callers.
+* Group member removal rotates `sender_key_epoch` and `distribution_id`; device revocation rotates
+  the group keys and revokes push tokens (asserted in `rls_policies.sql`).
+* Call state is terminal: an ended call cannot be resurrected by a late `active` update.
+* Client-side media encryption is streaming AES-256-GCM with a per-file key; the bucket is private.
 
-### A.3 What was changed in this change
+### A.3 What was changed in this milestone
 
-* `supabase/migrations/20261112035022_mm_security_hotfix_anon_rpc_prekey.sql` (applied to the live
-  project; the same SQL is in the repository).
-* `supabase/tests/rls_policies.sql`: assertions for anon function privileges and the anonymous
-  pre-key claim (section 8b).
-* Documentation: `README.md`, `docs/SUPABASE.md`, `docs/ARCHITECTURE.md`, this file.
+* `supabase/migrations/20261112070000_mm_social_graph_authz.sql` — S-2 fix plus the service-role
+  rate limiter and counter pruning.
+* `supabase/tests/rls_social_graph.sql` — negative/positive regression suite for S-2.
+* `supabase/tests/local/*` — disposable-database harness + Supabase platform stub.
+* `.github/workflows/backend.yml` — migrations, both suites, idempotency, Deno type-check, licence
+  inventory, secret scan.
+* `supabase/config.toml` — exposed schema list (`public` only) and `verify_jwt = true`.
+* `supabase/functions/_shared/rate_limit.ts` + edits to the three functions — S-3/S-4.
+* `tools/check_no_secrets.sh`, `tools/check_string_parity.sh`, `tools/license_inventory.py`.
+* Chat UX: archive, delete-for-me, forward, saved messages (+16 strings, both locales).
+* Documentation: `README.md`, `docs/AUDIT.md`, `docs/SECURITY.md`, `docs/SUPABASE.md`,
+  `docs/RELEASE.md`, `docs/ROADMAP.md`, `docs/CHANGELOG.md`, `THIRD_PARTY_NOTICES.md`.
 
 ### A.4 Remaining work, in priority order
 
-1. S-2: restrict the social-graph helpers to the caller's own id (with tests).
-2. T-1: run the Supabase suite in CI against a branch database, add Android instrumentation tests.
-3. T-2: two-device validation of online media, sync, calls and Mesh/online switching.
-4. L-1: owner decision on licensing and third-party notices.
-5. S-3: enable `verify_jwt` on the three Edge Functions after staging verification.
-6. F-1: features listed as not implemented.
+1. T-2: two-device validation of online media, sync, calls and mesh↔online switching.
+2. L-2: in-app licences screen (SQLCipher BSD notice + AGPL offer), then L-1: the owner's licence
+   decision.
+3. T-1: the remaining instrumentation coverage (navigation, notifications, Room migrations);
+   the storage and Keystore cases are already in CI.
+4. F-1: product features, in the order given in `docs/ROADMAP.md` (search filters, pinned messages,
+   scheduled/silent messages, disappearing messages, chat folders, then polls/stories).
+5. Group calls once an SFU is provisioned; the 1:1 path is not a substitute.
 
 ### A.5 Limits of this audit
 
-* The Android app was not compiled or run. Its findings come from reading the source.
-* No physical device was available to the audit.
-* The live Supabase checks were read-only, or performed inside transactions that were rolled back,
-  except for the one migration listed in A.3.
-
----
+* The sandbox has **no JDK, no Android SDK, no Docker and no route to Maven/Google/`supabase.co`**.
+  Anything Android is therefore verified by GitHub Actions on this branch, and anything about the
+  live project is verified against a faithful local PostgreSQL reproduction. No query was executed
+  against the live Supabase project in this milestone; the production database is untouched.
+* The new migration has **not been pushed to the live project**. It is additive and data-preserving,
+  and it must be applied with `supabase db push` (or the SQL editor) by the owner — see
+  `docs/SUPABASE.md`.
+* The Edge Functions have not been redeployed; until they are, the live deployment keeps the old
+  rate-limit behaviour and `verify_jwt = false`. `docs/OWNER_SETUP.md` lists the deploy command.
+* Security review is internal. No third-party cryptographic or application-security audit exists.
 
 ## Part B — Historical audit (2026-11-11, base `5880f98`)
 
@@ -154,7 +174,8 @@ QR pairing, EN + FA UI. No online mode, no accounts, no server.
 
 19. Persian translations cover the existing UI, but the app hard-codes some English in
     `Format.kt`-adjacent strings (verified: locale-aware formatting is fine).
-20. No instrumentation tests, no screenshot tests, no macrobenchmark.
+20. Storage and Keystore now have instrumented tests; screenshot tests, macrobenchmark and
+    navigation/notification instrumentation tests do not exist yet.
 21. `README` documents limitations honestly; several are now addressed.
 
 ## 3. What was missing entirely (requested by the mission)

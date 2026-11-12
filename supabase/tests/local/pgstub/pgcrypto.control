@@ -1,0 +1,7 @@
+# Stub control file: only used by supabase/tests/local/embedded_pg.py when the embedded
+# PostgreSQL build ships without contrib. CI uses the official postgres image, which has the real
+# pgcrypto, so production behaviour is never affected by this file.
+comment = 'cryptographic functions (test stub)'
+default_version = '1.3'
+module_pathname = '$libdir/pgcrypto'
+relocatable = true

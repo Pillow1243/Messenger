@@ -268,4 +268,25 @@
     <string name="action_save">Save</string>
     <string name="delete_conversation">Delete conversation</string>
     <string name="delete_conversation_confirm">Delete this conversation and its messages from this device?</string>
+
+    <!-- Archive, forwarding and saved messages -->
+    <string name="action_back">Back</string>
+    <string name="unknown_peer">Unknown</string>
+    <string name="more_actions">More</string>
+    <string name="chat_archive">Archive chat</string>
+    <string name="chat_unarchive">Unarchive</string>
+    <string name="chat_forward">Forward</string>
+    <string name="chat_delete_for_me">Delete for me</string>
+    <string name="forward_no_targets">There is no other chat to forward to yet.</string>
+    <string name="archived_chats">Archived chats</string>
+    <string name="archived_empty_title">No archived chats</string>
+    <string name="archived_empty_body">Chats you archive leave the main list and wait here with every message intact.</string>
+    <string name="saved_messages">Saved messages</string>
+    <string name="saved_empty_title">Nothing saved yet</string>
+    <string name="saved_empty_body">Star a message to keep it here. Saved messages never leave this device.</string>
+    <string name="saved_remove">Remove</string>
+    <string name="saved_media_placeholder">Attachment</string>
+    <string name="licences_title">Open-source licences</string>
+    <string name="licences_settings_subtitle">Third-party notices shipped in this build</string>
+    <string name="licences_loading">Loading notices…</string>
 </resources>

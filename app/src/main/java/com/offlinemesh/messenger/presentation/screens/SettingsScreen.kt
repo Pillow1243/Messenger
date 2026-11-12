@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
@@ -53,7 +54,11 @@ import com.offlinemesh.messenger.presentation.components.SectionCard
 import com.offlinemesh.messenger.presentation.components.ToggleRow
 
 @Composable
-fun SettingsScreen(vm: AppViewModel, onOpenAccount: () -> Unit = {}) {
+fun SettingsScreen(
+    vm: AppViewModel,
+    onOpenAccount: () -> Unit = {},
+    onOpenLicences: () -> Unit = {}
+) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val pairingCode by vm.pairingCode.collectAsStateWithLifecycle()
     var editName by remember { mutableStateOf(false) }
@@ -271,6 +276,12 @@ fun SettingsScreen(vm: AppViewModel, onOpenAccount: () -> Unit = {}) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+                ActionRow(
+                    icon = Icons.Filled.Info,
+                    title = stringResource(R.string.licences_title),
+                    subtitle = stringResource(R.string.licences_settings_subtitle),
+                    onClick = onOpenLicences
                 )
                 ActionRow(
                     icon = Icons.Filled.Delete,

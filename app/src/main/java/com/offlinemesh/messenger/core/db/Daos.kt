@@ -11,6 +11,13 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE archived = 0 ORDER BY pinned DESC, lastMessageAt DESC")
     fun observeAll(): Flow<List<ConversationEntity>>
 
+    /** Archived chats are hidden from the main list but stay fully usable (Telegram model). */
+    @Query("SELECT * FROM conversations WHERE archived = 1 ORDER BY lastMessageAt DESC")
+    fun observeArchived(): Flow<List<ConversationEntity>>
+
+    @Query("SELECT COUNT(*) FROM conversations WHERE archived = 1")
+    fun observeArchivedCount(): Flow<Int>
+
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observeById(id: String): Flow<ConversationEntity?>
 
@@ -165,6 +172,14 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE transferState IN ('UPLOADING','DOWNLOADING','ENCRYPTING','DECRYPTING')")
     suspend fun interruptedTransfers(): List<MessageEntity>
+
+    /**
+     * "Delete for me": removes the row from this device only. The server copy and every other
+     * participant are untouched, which is why it is a hard local delete rather than a
+     * `deletedAt` tombstone (a tombstone would still occupy the chat with a "deleted" placeholder).
+     */
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteLocal(id: String)
 
     @Query("UPDATE messages SET reactions = :summary WHERE id = :id")
     suspend fun setReactions(id: String, summary: String)

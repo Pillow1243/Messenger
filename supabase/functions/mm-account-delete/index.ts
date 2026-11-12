@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { consumeRateLimit } from "../_shared/rate_limit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,6 +47,16 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
+  // Deletion is destructive and rate limited (3 attempts per hour per account) so a stolen
+  // session cannot be used to hammer the cleanup path. Fails closed.
+  const limit = await consumeRateLimit(admin, uid, "account_delete", 3, 3600);
+  if (!limit.allowed) {
+    if (limit.error === "rate_limited") {
+      return json(429, { error: "rate_limited" });
+    }
+    return json(503, { error: "rate_limiter_unavailable" });
+  }
+
   // 1. Delete encrypted media blobs uploaded by this user in mm-media.
   const { data: attachments } = await admin
     .from("mm_attachments")
@@ -72,13 +83,17 @@ Deno.serve(async (req) => {
   // 3. Run database-level key rotation, revocation & anonymization RPC as the user.
   const { error: rpcErr } = await userClient.rpc("mm_delete_me");
   if (rpcErr) {
-    return json(500, { error: "delete_rpc_failed", detail: rpcErr.message });
+    // The database message stays server-side: it can contain row identifiers, constraint names
+    // and policy text, which an unauthenticated-ish caller has no reason to read.
+    console.error("mm_delete_me failed", rpcErr.code ?? "unknown");
+    return json(500, { error: "delete_rpc_failed" });
   }
 
   // 4. Permanently remove auth.users record so email/credentials can be cleanly forgotten.
   const { error: authDelErr } = await admin.auth.admin.deleteUser(uid);
   if (authDelErr) {
-    return json(500, { error: "auth_delete_failed", detail: authDelErr.message });
+    console.error("auth admin deleteUser failed", authDelErr.status ?? "unknown");
+    return json(500, { error: "auth_delete_failed" });
   }
 
   return json(200, { ok: true, deletedUserId: uid });

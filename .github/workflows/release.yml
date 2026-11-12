@@ -79,6 +79,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.0.1
 
+      - name: Licence inventory and string parity
+        run: |
+          python3 tools/license_inventory.py
+          python3 tools/build_licence_asset.py --check
+          ./tools/check_string_parity.sh
+          ./tools/check_no_secrets.sh
+
       - name: Unit tests and lint
         run: |
           set -o pipefail
@@ -118,6 +125,10 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           cp app/build/outputs/apk/release/app-release.apk artifacts/messenger-${{ github.event.inputs.tag || github.ref_name }}.apk
+          # Attribution that must accompany the binary, plus the resolved dependency tree it covers.
+          cp THIRD_PARTY_NOTICES.md artifacts/
+          ./gradlew --no-daemon --console=plain :app:dependencies \
+            --configuration releaseRuntimeClasspath > artifacts/dependency-graph.txt || true
           cd artifacts
           sha256sum *.apk > SHA256SUMS.txt
           {
@@ -143,7 +154,10 @@ jobs:
             * commit `${{ github.sha }}`
             * verify the APK against `SHA256SUMS.txt` before installing
             * messages are end-to-end encrypted; the servers only ever store ciphertext
+            * third-party licences and obligations: `THIRD_PARTY_NOTICES.md`
           files: |
             artifacts/messenger-*.apk
             artifacts/SHA256SUMS.txt
             artifacts/build-metadata.txt
+            artifacts/THIRD_PARTY_NOTICES.md
+            artifacts/dependency-graph.txt

@@ -52,6 +52,9 @@ it, and the app works to its full offline extent with no account and no network.
   per‑chat mute, and deep links (see [`docs/OWNER_SETUP.md`](docs/OWNER_SETUP.md)).
 * **Realtime + offline outbox** — WebSocket hints + cursor backfill + `WorkManager` background sync
   and durable cross‑transport reconciliation (`HybridReconciler`).
+* **Chat hygiene** — drafts, replies, edits, delete‑for‑everyone, delete‑for‑me, forwarding to any
+  chat the device already holds (works offline too), starring with a *Saved messages* screen,
+  archived chats, per‑chat mute, pinned chats, reactions and device‑side search.
 
 ---
 
@@ -143,7 +146,10 @@ what the CI publishes to the `demo-latest` prerelease; it is not an upgrade path
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest
+./gradlew testDebugUnitTest          # 15 JVM test classes
+./tools/check_string_parity.sh       # English/Persian keys must match
+./tools/license_inventory.py         # every dependency has a licence entry
+./tools/check_no_secrets.sh          # no keys/keystores/elevated JWTs in the tree
 ```
 
 | Test class | Covers |
@@ -158,13 +164,22 @@ what the CI publishes to the `demo-latest` prerelease; it is not an upgrade path
 | `RealtimeProtocolTest` | join/heartbeat frames, change parsing, malformed input |
 | `BackoffTest` | outbox retry schedule, cap and exhaustion |
 
-Plus a **server‑side authorization suite** (`supabase/tests/rls_policies.sql`) that runs against the
-live project and asserts the whole permission matrix.
+Plus the **server-side suites**, which run against a disposable PostgreSQL database — locally with
+`python3 supabase/tests/local/embedded_pg.py` (needs only `pip install pgserver`), in CI on every
+push with a `postgres:16` service container:
+
+| Suite | Covers |
+| --- | --- |
+| `supabase/tests/rls_policies.sql` | the whole permission matrix: membership, envelopes, pre-keys, Sender Keys rotation, calls, storage prefixes, blocks, rate limiting, `anon` denial |
+| `supabase/tests/rls_social_graph.sql` | the S-2 hardening: no relationship may be probed for a third party, `mm_private` is unreachable by API roles, legitimate co-member access still works, plus an RLS-policy-coverage audit |
+
+The harness also re-applies every migration to prove idempotency, and `backend.yml` type-checks the
+three Edge Functions with Deno.
 
 ## Known limitations
 
-Verified against the source tree and the live Supabase project on 2026-11-12. Items are listed
-because they are genuinely open, not because they are hidden.
+Verified against the source tree and the backend on 2026-11-12. Items are listed because they are
+genuinely open, not because they are hidden. `docs/AUDIT.md` Part A has the full finding list.
 
 1. **Online media is implemented but needs two-device validation.** Encrypted upload to the private
    `mm-media` bucket, resumable transfer, thumbnails and progress/cancel/retry exist in code; the
@@ -172,25 +187,35 @@ because they are genuinely open, not because they are hidden.
    [`docs/TWO_DEVICE_VALIDATION.md`](docs/TWO_DEVICE_VALIDATION.md)).
 2. **Group calls are not implemented.** 1:1 WebRTC voice and video are. Group calls require an SFU;
    none is deployed, so no group call button exists.
-3. **Social-graph helper functions are callable by any signed-in user** (`mm_shares_conversation`,
-   `mm_is_blocked`, `mm_is_member` take arbitrary user/conversation ids). Anonymous access was closed
-   by migration `20261112035022`; tightening the signed-in path needs its own change, because the
-   same helpers back the RLS policies. Tracked in [`docs/AUDIT.md`](docs/AUDIT.md).
+3. **Instrumentation coverage is partial.** Storage and Keystore have emulator-backed tests in CI
+   (encrypted file at rest, passphrase reuse, schema inventory), but navigation, notifications and
+   Room migrations do not. Listed in `docs/ROADMAP.md`.
 4. **Background service** can still be killed by aggressive OEM power managers.
-5. **Stories, polls, scheduled messages, bots and Mini Apps are not implemented.** They are roadmap
-   items, not partial features.
+5. **Stories, polls, scheduled/silent messages, disappearing messages, chat folders, bots and Mini
+   Apps are not implemented.** They are roadmap items in [`docs/ROADMAP.md`](docs/ROADMAP.md), not
+   partial features, and no button pretends otherwise.
 6. **No independent cryptographic audit has been performed.** The protocols are the audited
    libsignal implementation, but the integration is not third-party reviewed.
+7. **Deployment lag.** Migration `20261112070000` (social-graph hardening, service-role rate limiter)
+   and the updated Edge Functions are in the repository but must still be pushed to the live
+   Supabase project by the owner (`supabase db push` / `supabase functions deploy`). Until then the
+   live deployment keeps the old behaviour described in `docs/AUDIT.md`.
+8. **Licence decision outstanding.** `libsignal` is AGPL-3.0 and the repository has no `LICENSE`.
+   The in-app attribution screen now exists (Settings → About → Open-source licences), but choosing
+   the project licence is the owner's decision. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Roadmap
 
-* Physical two-device validation of the online media, sync and call paths.
-* SFU-based group calls, then stories and polls.
-* Tighter social-graph authorization (see limitation 3).
-* Scheduled and silent messages, bots and Mini Apps (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+[`docs/ROADMAP.md`](docs/ROADMAP.md) is the maintained list. In short: physical two-device
+validation, the licence decision, the remaining instrumentation coverage, then search filters,
+pinned and scheduled messages, disappearing messages, chat folders, SFU group calls, polls and
+stories.
 
 ## License
 
-The application code is provided as‑is for the demo. It links against
-[libsignal](https://github.com/signalapp/libsignal), which is **AGPL‑3.0** — distributing a binary
-that includes it means complying with the AGPL. Read the licence before shipping this app.
+No licence has been chosen for this repository's own code yet — that is an owner decision, not
+something to invent here. What is certain is the obligation created by the dependencies: the app
+links [libsignal](https://github.com/signalapp/libsignal), which is **AGPL-3.0**, so distributing a
+binary that includes it means complying with the AGPL (§13 included), and the SQLCipher BSD notice
+must be reproduced in a user-accessible place. [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+lists every component, its licence, and the three decisions that remain with the owner.

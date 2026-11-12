@@ -129,6 +129,7 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
     var showGroupInfo by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var pendingCallVideo by remember { mutableStateOf<Boolean?>(null) }
+    var forwardTarget by remember { mutableStateOf<MessageEntity?>(null) }
 
     val errorKey by vm.error.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
@@ -360,6 +361,19 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                                 onClick = {
                                     menuExpanded = false
                                     vm.toggleConversationPin(conversationId)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (conversation?.archived == true) stringResource(R.string.chat_unarchive)
+                                        else stringResource(R.string.chat_archive)
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    vm.setConversationArchived(conversationId, conversation?.archived != true)
+                                    onBack()
                                 }
                             )
                             if (conversation?.type == ConversationType.GROUP) {
@@ -603,6 +617,26 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                         }
                     )
                     DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_forward)) },
+                        onClick = {
+                            actionTarget = null
+                            forwardTarget = target
+                        },
+                        enabled = target.deletedAt == null
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(R.string.chat_delete_for_me),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            actionTarget = null
+                            vm.deleteForMe(target.id)
+                        }
+                    )
+                    DropdownMenuItem(
                         text = { Text(stringResource(R.string.chat_star)) },
                         onClick = {
                             actionTarget = null
@@ -615,6 +649,19 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                 TextButton(onClick = { actionTarget = null }) {
                     Text(stringResource(R.string.action_cancel))
                 }
+            }
+        )
+    }
+
+    val pendingForward = forwardTarget
+    if (pendingForward != null) {
+        ForwardPickerDialog(
+            vm = vm,
+            excludeConversationId = conversationId,
+            onDismiss = { forwardTarget = null },
+            onPick = { targetConversationId ->
+                vm.forwardMessage(pendingForward.id, targetConversationId)
+                forwardTarget = null
             }
         )
     }

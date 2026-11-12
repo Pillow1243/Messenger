@@ -55,6 +55,22 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.0.1
 
+      # Cheap, dependency-free checks that catch the classic "forgot to translate" regression
+      # before Gradle even starts.
+      - name: English / Persian string parity
+        run: ./tools/check_string_parity.sh
+
+      - name: No committed credentials
+        run: ./tools/check_no_secrets.sh
+
+      - name: Third-party licence inventory
+        run: python3 tools/license_inventory.py
+
+      # The APK ships THIRD_PARTY_NOTICES.md so attribution is reachable from inside the app;
+      # this fails if the generated asset and the repository notices file have drifted apart.
+      - name: In-app licence asset is current
+        run: python3 tools/build_licence_asset.py --check
+
       # Gradle's own log is only reachable through the artifact blob, which some CI
       # environments cannot fetch. Re-emitting the compiler/lint errors as workflow
       # annotations makes the failure readable directly from the check run.
@@ -107,6 +123,11 @@ jobs:
           else
             cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/offlinemesh-demo-signed.apk
           fi
+          # Dependency inventory + attribution notice travel with the binaries so a recipient can
+          # see exactly what is inside the APK and under which licences.
+          ./gradlew --no-daemon --console=plain :app:dependencies \
+            --configuration releaseRuntimeClasspath > artifacts/dependency-graph.txt || true
+          cp THIRD_PARTY_NOTICES.md artifacts/
           cd artifacts && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Upload test report
@@ -150,6 +171,226 @@ jobs:
             git diff --stat -- app/schemas
             exit 1
           fi
+
+  instrumented:
+    name: Android instrumentation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.5.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Point Gradle at the preinstalled SDK
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.0.1
+
+      # The hosted runner is a nested VM; the emulator needs /dev/kvm permission for x86_64.
+      # Both commands are allowed to fail here: on images where udev rules are not writable the
+      # permission is usually already correct, and a hard failure here would mask the real cause.
+      - name: Enable KVM
+        run: |
+          set -x
+          sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null <<'RULE'
+          KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"
+          RULE
+          sudo udevadm control --reload-rules || echo "::warning::udevadm control failed"
+          sudo udevadm trigger --name-match=kvm || echo "::warning::udevadm trigger failed"
+          ls -l /dev/kvm || echo "::warning::/dev/kvm is absent on this runner"
+
+      # Compiling the instrumentation APK is cheap and catches test-source errors long before an
+      # emulator boots. Gradle's own errors are surfaced as annotations so a failure is readable
+      # from the checks API even when the job log is not.
+      - name: Compile debug + instrumentation APKs
+        run: |
+          set -o pipefail
+          if ! ./gradlew --no-daemon --console=plain -PextraAbis=x86_64 \
+              assembleDebug assembleDebugAndroidTest 2>&1 | tee build.log; then
+            grep -E "^e: |error:|FAILURE:" build.log | head -25 |
+              while IFS= read -r line; do echo "::error title=Gradle::${line}"; done
+            exit 1
+          fi
+
+      # These tests cover what JVM tests cannot: SQLCipher's native library, the real Keystore
+      # wrap, and the on-disk encryption property (no SQLite header, no plaintext canary).
+      #
+      # The emulator is driven explicitly rather than through a third-party action: the action
+      # this repository used to pin failed during its own SDK installation, and its diagnostics
+      # only ever appeared in a job log. Every command below is wrapped so a failure becomes a
+      # check annotation with the tail of the relevant log attached.
+      - name: Install emulator and system image
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
+          log=/tmp/sdk-install.log
+          { yes | "$SDKMANAGER" --licenses; } >"$log" 2>&1 || true
+          if ! "$SDKMANAGER" --install "platform-tools" "emulator" \
+              "system-images;android-30;google_apis;x86_64" >>"$log" 2>&1; then
+            tail -c 3000 "$log" | while IFS= read -r line; do echo "::error title=SDK install::${line}"; done
+            exit 1
+          fi
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          # Pin the AVD location: avdmanager and the emulator disagree about the default on some
+          # runner images, which produced an "Unknown AVD name" boot failure with no other clue.
+          mkdir -p "$HOME/android-avd"
+          echo "ANDROID_AVD_HOME=$HOME/android-avd" >> "$GITHUB_ENV"
+          tail -3 "$log"
+
+      - name: Create AVD
+        run: |
+          set -uo pipefail
+          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          [ -x "$AVDMANAGER" ] || AVDMANAGER="$(command -v avdmanager)"
+          AVD_HOME="$HOME/android-avd"
+          mkdir -p "$AVD_HOME"
+          log=/tmp/avd-create.log
+          if ! echo no | ANDROID_AVD_HOME="$AVD_HOME" "$AVDMANAGER" create avd --force \
+              --name ci-api30 --package "system-images;android-30;google_apis;x86_64" \
+              --device pixel_5 --path "$AVD_HOME/ci-api30.avd" >"$log" 2>&1; then
+            tail -c 2000 "$log" | while IFS= read -r line; do echo "::error title=AVD::${line}"; done
+            exit 1
+          fi
+          # A silently empty AVD directory would only surface much later as "Unknown AVD name".
+          if ! ANDROID_AVD_HOME="$AVD_HOME" "$AVDMANAGER" list avd -c | grep -qx ci-api30; then
+            echo "::error title=AVD::avdmanager reported success but no ci-api30 AVD exists in $AVD_HOME"
+            tail -c 2000 "$log" | while IFS= read -r line; do echo "::error title=AVD::${line}"; done
+            ls -la "$AVD_HOME" || true
+            exit 1
+          fi
+          echo "created AVD ci-api30 in $AVD_HOME"
+
+      - name: Boot emulator
+        run: |
+          set -uo pipefail
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          [ -x "$ADB" ] || { echo "::error title=Emulator::adb missing from $ANDROID_HOME"; exit 1; }
+          [ -x "$EMULATOR" ] || { echo "::error title=Emulator::$EMULATOR is missing"; exit 1; }
+          export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$HOME/android-avd}"
+          "$ADB" start-server
+
+          # Boot once per GPU backend. If the emulator dies on the first backend its exit status
+          # is recorded, because a crashed emulator writes nothing useful to its own log.
+          launch() {
+            gpu="$1"
+            log="/tmp/emulator-${gpu//[^a-z0-9]/_}.log"
+            rm -f "$log" /tmp/emulator-exit
+            (
+              "$EMULATOR" -avd ci-api30 -port 5554 -no-window -no-audio -no-boot-anim \
+                -no-snapshot -no-metrics -gpu "$gpu" >"$log" 2>&1
+              echo $? > /tmp/emulator-exit
+            ) &
+            for _ in $(seq 1 90); do
+              boot=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              if [ "$boot" = "1" ]; then
+                echo "emulator booted with -gpu $gpu after ${_:-0} polls"
+                return 0
+              fi
+              if [ -f /tmp/emulator-exit ]; then
+                echo "::error title=Emulator::the emulator exited with status $(cat /tmp/emulator-exit) using -gpu $gpu"
+                return 1
+              fi
+              sleep 5
+            done
+            echo "::error title=Emulator::the emulator did not finish booting within 450s using -gpu $gpu"
+            return 1
+          }
+
+          if launch swiftshader_indirect; then
+            best=/tmp/emulator-swiftshader_indirect.log
+          elif launch off; then
+            best=/tmp/emulator-off.log
+          else
+            echo "::error title=Emulator::the emulator could not boot with either GPU backend"
+            exit 1
+          fi
+          cp "$best" /tmp/emulator.log
+
+          "$ADB" -s emulator-5554 shell settings put global window_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global transition_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global animator_duration_scale 0
+          echo "device: $("$ADB" -s emulator-5554 shell getprop ro.product.model | tr -d '\r') / API $("$ADB" -s emulator-5554 shell getprop ro.build.version.sdk | tr -d '\r')"
+
+      # Annotations emitted by a step that aborts are not always retained, so the emulator log is
+      # re-emitted from a separate, successful step. This is what makes a boot failure debuggable
+      # from the checks API rather than only from the raw job log.
+      - name: Emulator boot diagnostics
+        if: failure()
+        run: |
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          echo "::error title=Emulator::emulator binary: $(ls -l "$ANDROID_HOME/emulator/emulator" 2>&1)"
+          echo "::error title=Emulator::adb: $("$ADB" version 2>&1 | head -2 | tr '\n' ' ')"
+          echo "::error title=Emulator::devices: $("$ADB" devices 2>&1 | tr '\n' ' ')"
+          echo "::error title=Emulator::avd home: $(ls "$HOME/.android/avd" 2>&1 | tr '\n' ' ')"
+          # One annotation carrying the tail of the log, newline-escaped: per-line annotations
+          # are capped per step, which would hide the interesting end of the log.
+          python3 - <<'PYEOF'
+          import pathlib
+          tail = pathlib.Path("/tmp/emulator.log").read_text(errors="replace")[-3500:]
+          escaped = tail.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print(f"::error title=Emulator log::{escaped}")
+          PYEOF
+          exit 1
+
+      - name: Run instrumentation tests
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --console=plain -PextraAbis=x86_64 connectedDebugAndroidTest \
+            2>&1 | tee device.log || {
+              grep -E "^e: |error:|FAILURE:|There were failing tests|Tests on|junit.framework" device.log |
+                head -40 | while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done
+              exit 1
+            }
+
+      - name: Stop emulator
+        if: always()
+        run: |
+          "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 emu kill || true
+          pkill -f "qemu-system" || true
+
+      # Emitting the JUnit results as annotations makes the outcome readable from the checks API,
+      # and a missing report becomes an explicit failure instead of a silent "no artifacts"
+      # warning, so a green run always means the tests really ran.
+      - name: Summarise instrumentation results
+        if: always()
+        run: |
+          shopt -s nullglob globstar
+          results=(app/build/outputs/androidTest-results/**/*.xml)
+          if [ ${#results[@]} -eq 0 ]; then
+            echo "::error title=Instrumentation::no JUnit result files were produced; the emulator or the test run failed before reporting"
+            exit 1
+          fi
+          sum_attr() { grep -ho "$1=\"[0-9]*\"" "${results[@]}" | grep -o '[0-9]*' | awk '{s+=$1} END {print s+0}'; }
+          failures=$(sum_attr failures)
+          tests=$(sum_attr tests)
+          echo "instrumentation: ${tests} tests, ${failures} failures/errors"
+          # A notice makes the count visible from the checks API, which is the evidence that the
+          # suite really executed rather than being skipped.
+          echo "::notice title=Instrumentation::${tests} tests ran on the emulator, ${failures} failures"
+          if [ "${failures:-1}" -gt 0 ] || [ "${tests:-0}" -eq 0 ]; then
+            grep -h -A3 '<failure\|<error' "${results[@]}" | head -40 |
+              while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done
+            exit 1
+          fi
+
+      - name: Upload instrumentation reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: instrumentation-reports
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+          if-no-files-found: warn
+          retention-days: 14
 
   demo-release:
     name: Publish demo build (main only)

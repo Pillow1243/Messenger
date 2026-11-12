@@ -92,3 +92,50 @@ export MESSENGER_KEY_ALIAS="offlinemesh"
 export MESSENGER_KEY_PASSWORD="..."
 ./gradlew assembleRelease
 ```
+
+---
+
+## 4. Deploying the security hardening to the live project
+
+The repository is ahead of the deployed backend: migration `20261112070000` and the updated Edge
+Functions exist in Git but have **not** been pushed to `lnhmbjqjfrnqkpsjpszb` (the sandbox that
+prepared them has no route to `supabase.co`). Two commands close the gap, and both are additive:
+
+```bash
+# 1) Apply the additive migration (mm_private schema, caller-scoped helpers,
+#    service-role rate limiter). No table, column or existing row is modified.
+supabase link --project-ref lnhmbjqjfrnqkpsjpszb
+supabase db push
+
+# 2) Redeploy the three functions; supabase/config.toml now sets verify_jwt = true for each,
+#    so the gateway flag changes with the deployment, not by hand.
+supabase functions deploy mm-account-delete
+supabase functions deploy mm-turn-credentials
+supabase functions deploy mm-push-dispatch
+```
+
+Verify afterwards (read-only, from the SQL editor or `psql`):
+
+```sql
+-- no API role may reach the internal helpers
+select has_schema_privilege('authenticated', 'mm_private', 'USAGE');           -- must be false
+select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'mm_private' and has_function_privilege('anon', p.oid, 'EXECUTE'); -- must be 0
+-- the subject limiter is service_role only
+select has_function_privilege('authenticated',
+        'public.mm_consume_rate_limit_as(text,text,integer,integer)', 'EXECUTE');   -- must be false
+```
+
+Then run both suites against a branch database (`docs/SUPABASE.md` → Tests) before relying on the
+deployment. If the migration has to be rolled back for any reason:
+
+```sql
+drop schema mm_private cascade;
+```
+
+and restore the previous helper bodies from migrations `20261111120000` / `20261111120200`. No data
+is lost by the rollback because the migration never touches a table.
+
+> Shared project warning: this database also hosts another application. Only `mm_*` objects (and the
+> `mm-media` / `mm-avatars` buckets) belong to Messenger. Never modify `luma_*` tables, functions or
+> buckets.

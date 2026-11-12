@@ -36,6 +36,15 @@ val hasReleaseSigning: Boolean = releaseKeystorePath != null && releaseKeystoreP
     releaseKeyAlias != null && releaseKeyPassword != null
 val demoSign: Boolean = (findProperty("demoSign") as String?)?.toBoolean() ?: false
 
+// Extra ABIs for emulator-hosted instrumentation tests: GitHub's x86_64 runners cannot load the
+// arm64-only native libraries, so `-PextraAbis=x86_64` adds them to a debug build. Release, demo
+// and published artefacts keep the two real-device ABIs and the much smaller download.
+val extraAbis: List<String> = (findProperty("extraAbis") as String?)
+    ?.split(",")
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+    ?: emptyList()
+
 android {
     namespace = "com.offlinemesh.messenger"
     compileSdk = 34
@@ -54,7 +63,7 @@ android {
         // Android 8+ phones use are packaged; x86/x86_64 are emulator-only and would
         // otherwise roughly double the download.
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a") + extraAbis
         }
 
         val firebaseAppId = (findProperty("firebaseAppId") as String?)?.takeIf { it.isNotBlank() }

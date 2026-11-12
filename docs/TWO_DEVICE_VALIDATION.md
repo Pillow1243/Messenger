@@ -73,6 +73,27 @@ Grant **Nearby devices / Bluetooth / Location**, **Notifications**, **Microphone
    * Verify bidirectional audio, remote video full-screen feed, and local PiP camera preview.
    * Test **Mute** / **Unmute**, **Speaker**, **Camera** (on/off) and **Flip**, then **End**.
 
+### Suite G — Chat hygiene (archive, forward, delete-for-me, saved)
+
+Run on both phones, signed in and offline at turns.
+
+1. **Archive** — chat menu → *Archive chat*. The chat leaves the list; the *Archived chats* row at the
+   top shows `1`. Open *Archived chats* → tap the chat (opens, stays archived) → *Unarchive* → the
+   chat returns to the main list and the counter row disappears.
+2. **Delete for me** — long-press a **received** message → *Delete for me*. It disappears only on
+   that phone; the sender's copy stays. Repeat with an **outgoing** queued message while offline and
+   confirm it never uploads later (the outbox entry is cancelled).
+3. **Delete for everyone** — long-press an outgoing message → *Delete for everyone*; both phones show
+   the deleted placeholder.
+4. **Forward online** — long-press a text message → *Forward* → pick a second chat. The message
+   arrives in the target chat and in its own thread order.
+5. **Forward offline (mesh)** — with both phones in Airplane Mode + Nearby enabled, forward a text
+   message and a voice note to the mesh chat. Both arrive over the radio, exactly once.
+6. **Saved messages** — star a message, open chat-list overflow → *Saved messages*: the entry appears
+   with the chat title and timestamp; tap it to jump to the chat; *Remove* drops it from the list.
+7. **Persian** — switch to `فارسی` and repeat 1–6: labels are translated, the back arrow mirrors, and
+   forwarded content keeps its direction inside the bubble.
+
 ### Suite F — Hybrid Offline <-> Online Transitions (All 10 Scenarios)
 
 1. **Mesh -> Online**: Pair & chat offline first, then sign in online and link — verify one unified conversation thread (`Mesh + online`).
@@ -97,4 +118,7 @@ Grant **Nearby devices / Bluetooth / Location**, **Notifications**, **Microphone
 | **1:1 WebRTC State Machine, Busy/Direct Guards & TURN Edge Fn** | **Yes** (`CallStateMachineTest` + live `mm-turn-credentials` deployment) | Not run in cloud sandbox | Ready via Suite E | Direct/STUN works out of the box; symmetric-NAT relay requires owner `TURN_*` secrets (`docs/OWNER_SETUP.md`). |
 | **All 10 Hybrid Mesh <-> Online Transition Invariants** | **Yes** (`HybridTransitionTest`, `TransportSelectorTest`, `RoutingPolicyTest`, `MeshDeliveryTest`) | Not run in cloud sandbox | Ready via Suite A & F | Real BLE / Wi-Fi Direct radio handoffs require two physical Android phones. |
 | **Multi-Device (5-Device Cap, Revocation, Pre-Key Rotation, Account Delete)** | **Yes** (Live SQL RPC verification + `mm-account-delete` Edge Function) | Not run in cloud sandbox | Ready via Suite B | Enforces max 5 active devices & rotates group Sender Keys on device revocation. |
-| **EN + FA (`فارسی`) String Parity, RTL Icons & R8 Minification** | **Yes** (234/234 EN=FA keys, `lintDebug`, R8 `assembleDemo`) | Not run in cloud sandbox | Ready via Suite F | Zero literal directional arrows; full `Icons.AutoMirrored` usage. |
+| **EN + FA (`فارسی`) String Parity, RTL Icons & R8 Minification** | **Yes** (`tools/check_string_parity.sh`: 250/250 keys; `lintDebug`; R8 `assembleDemo`) | Not run in cloud sandbox | Ready via Suite F & G | Zero literal directional arrows; full `Icons.AutoMirrored` usage. |
+| **Archive, delete-for-me, forward, saved messages** | **Yes for the data paths** (`ChatRepository`/DAO logic compiles; local-only state) | Not run in cloud sandbox | **Ready via Suite G** | Forwarding and archive are pure local operations, so the radio tests only need to confirm delivery of the forwarded copy. |
+| **Social-graph authorisation hardening (S-2)** | **Yes** (`supabase/tests/rls_social_graph.sql`, plus a negative run on a pre-fix database) | N/A | Not applicable | The fix is server-side; it is live only after the owner runs `supabase db push`. |
+| **Edge Function rate limiting & gateway JWT (S-3/S-4)** | **Yes** (Deno type-check in CI; `mm_consume_rate_limit_as` covered by the suite) | N/A | Not applicable | Requires `supabase functions deploy` for the `verify_jwt`/limiter changes to take effect live. |
