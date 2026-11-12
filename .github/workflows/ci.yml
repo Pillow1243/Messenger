@@ -271,34 +271,53 @@ jobs:
         run: |
           set -uo pipefail
           ADB="$ANDROID_HOME/platform-tools/adb"
-          [ -x "$ADB" ] || { echo "::error title=Emulator::adb is missing from $ANDROID_HOME"; exit 1; }
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          [ -x "$ADB" ] || { echo "::error title=Emulator::adb missing from $ANDROID_HOME"; exit 1; }
+          [ -x "$EMULATOR" ] || { echo "::error title=Emulator::$EMULATOR is missing"; exit 1; }
+          export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$HOME/android-avd}"
           "$ADB" start-server
-          ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$HOME/android-avd}" \
-            "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
-            -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
-            >/tmp/emulator.log 2>&1 &
-          # The launcher forks before it starts the VM, so its own pid is not a reliable liveness
-          # signal; the qemu process is.
-          boot=""
-          for _ in $(seq 1 90); do
-            boot=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            [ "$boot" = "1" ] && break
-            if ! pgrep -f "qemu-system" >/dev/null 2>&1; then
-              echo "::error title=Emulator::no qemu process is running, the emulator exited during boot"
-              exit 1
-            fi
-            sleep 5
-          done
-          if [ "$boot" != "1" ]; then
-            echo "::error title=Emulator::the emulator did not finish booting within 450s"
-            tail -c 3000 /tmp/emulator.log |
-              while IFS= read -r line; do echo "::error title=Emulator::${line}"; done
+
+          # Boot once per GPU backend. If the emulator dies on the first backend its exit status
+          # is recorded, because a crashed emulator writes nothing useful to its own log.
+          launch() {
+            gpu="$1"
+            log="/tmp/emulator-${gpu//[^a-z0-9]/_}.log"
+            rm -f "$log" /tmp/emulator-exit
+            (
+              "$EMULATOR" -avd ci-api30 -port 5554 -no-window -no-audio -no-boot-anim \
+                -no-snapshot -no-metrics -gpu "$gpu" >"$log" 2>&1
+              echo $? > /tmp/emulator-exit
+            ) &
+            for _ in $(seq 1 90); do
+              boot=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              if [ "$boot" = "1" ]; then
+                echo "emulator booted with -gpu $gpu after ${_:-0} polls"
+                return 0
+              fi
+              if [ -f /tmp/emulator-exit ]; then
+                echo "::error title=Emulator::the emulator exited with status $(cat /tmp/emulator-exit) using -gpu $gpu"
+                return 1
+              fi
+              sleep 5
+            done
+            echo "::error title=Emulator::the emulator did not finish booting within 450s using -gpu $gpu"
+            return 1
+          }
+
+          if launch swiftshader_indirect; then
+            best=/tmp/emulator-swiftshader_indirect.log
+          elif launch off; then
+            best=/tmp/emulator-off.log
+          else
+            echo "::error title=Emulator::the emulator could not boot with either GPU backend"
             exit 1
           fi
+          cp "$best" /tmp/emulator.log
+
           "$ADB" -s emulator-5554 shell settings put global window_animation_scale 0
           "$ADB" -s emulator-5554 shell settings put global transition_animation_scale 0
           "$ADB" -s emulator-5554 shell settings put global animator_duration_scale 0
-          echo "emulator booted: API $("$ADB" -s emulator-5554 shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "device: $("$ADB" -s emulator-5554 shell getprop ro.product.model | tr -d '\r') / API $("$ADB" -s emulator-5554 shell getprop ro.build.version.sdk | tr -d '\r')"
 
       # Annotations emitted by a step that aborts are not always retained, so the emulator log is
       # re-emitted from a separate, successful step. This is what makes a boot failure debuggable
