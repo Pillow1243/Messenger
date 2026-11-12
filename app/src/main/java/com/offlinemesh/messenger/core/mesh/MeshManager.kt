@@ -82,10 +82,19 @@ class MeshManager(
         /** A packet we are relaying for someone else; persist it for store-and-forward. */
         suspend fun onRelay(header: PacketHeader, body: ByteArray)
 
-        /** A delivery receipt from a peer. */
-        suspend fun onAck(header: PacketHeader)
+        /**
+         * A delivery receipt addressed to this device. [body] is Signal ciphertext: what is being
+         * acknowledged is only known, and only believed, after it decrypts.
+         */
+        suspend fun onAck(header: PacketHeader, body: ByteArray)
+
+        /** A packet addressed to this device that was already seen once (a retransmission). */
+        suspend fun onDuplicate(header: PacketHeader, body: ByteArray) {}
 
         suspend fun onPeerGone(deviceId: String)
+
+        /** Called every [WATCHDOG_INTERVAL_MS] while at least one peer is connected. */
+        suspend fun onTick() {}
     }
 
     private val client: ConnectionsClient = Nearby.getConnectionsClient(context)
@@ -273,6 +282,9 @@ class MeshManager(
             // Rebuild HELLO material periodically: pre-keys get consumed as peers connect.
             runCatching { refreshIdentity() }
             runCatching { seenPacketDao?.deleteOlderThan(now - RoutingPolicy.PACKET_TTL_MS) }
+            // Unacknowledged packets are repeated from here; without this pass a packet written
+            // to a link that dropped a moment later would wait for the next app start.
+            if (peers.isNotEmpty()) runCatching { handler?.onTick() }
         }
     }
 
@@ -368,17 +380,33 @@ class MeshManager(
 
         if (!RoutingPolicy.isUsable(header, now)) return
         if (RoutingPolicy.isFromSelf(header, myDeviceId)) return
-        if (!seen.markSeen(header.packetId, now)) return
-        val duplicateInDb = seenPacketDao?.let { dao ->
-            runCatching {
-                dao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
-            }.getOrDefault(1L) == -1L
-        } ?: false
-        if (duplicateInDb) return
+        val duplicate = !seen.markSeen(header.packetId, now) || (
+            seenPacketDao?.let { dao ->
+                runCatching {
+                    dao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
+                }.getOrDefault(1L) == -1L
+            } ?: false
+            )
+        if (duplicate) {
+            // A copy of something already seen is never forwarded again. When it is addressed to
+            // this device it is still shown to the handler: the sender repeats a packet until it
+            // is acknowledged, so a repeat usually means the acknowledgement was lost.
+            if (header.to == myDeviceId && header.type in RETRANSMITTED_TYPES) {
+                handler?.onDuplicate(header, packet.body)
+            }
+            return
+        }
 
         when (header.type) {
             PacketType.HELLO -> handleHello(endpointId, packet.body)
-            PacketType.ACK -> if (header.to == myDeviceId) handler?.onAck(header)
+            PacketType.ACK -> if (header.to == myDeviceId) {
+                handler?.onAck(header, packet.body)
+            } else if (RoutingPolicy.shouldForward(header, myDeviceId, now)) {
+                // Somebody else's acknowledgement: carry it like any other packet, otherwise a
+                // message that needed a relay could never be confirmed.
+                handler?.onRelay(header, packet.body)
+                broadcast(RoutingPolicy.forwarded(header), packet.body, exceptEndpointId = endpointId)
+            }
             else -> {
                 if (RoutingPolicy.isForMe(header, myDeviceId)) {
                     handler?.onPacket(header, packet.body)
@@ -404,19 +432,24 @@ class MeshManager(
             return
         }
 
-        // A device may reconnect with a new endpoint id; keep a single mapping per device.
-        peers[endpointId] = PeerInfo(endpointId, hello.deviceId, hello.name, System.currentTimeMillis())
-        endpointByDevice[hello.deviceId] = endpointId
-        publishPeers()
-
+        // The bundle is checked before the device id is bound to this link. A HELLO is not signed,
+        // so the id in it is only a claim; an endpoint that presents a different identity key for
+        // a device we already know must not take over that device's route (it would receive -
+        // and could silently discard - everything queued for the real one).
         try {
             val bundle = Base64.decode(hello.bundle, Base64.NO_WRAP)
             crypto.processPeerBundle(hello.deviceId, bundle)
         } catch (e: IdentityChangedException) {
-            Log.w(TAG, "Identity changed for ${hello.deviceId}")
+            Log.w(TAG, "Identity changed for ${hello.deviceId}; link not trusted")
+            return
         } catch (e: Exception) {
             Log.e(TAG, "Could not process pre-key bundle from ${hello.deviceId}", e)
         }
+
+        // A device may reconnect with a new endpoint id; keep a single mapping per device.
+        peers[endpointId] = PeerInfo(endpointId, hello.deviceId, hello.name, System.currentTimeMillis())
+        endpointByDevice[hello.deviceId] = endpointId
+        publishPeers()
 
         handler?.onPeerReady(peers[endpointId] ?: return)
     }
@@ -512,5 +545,8 @@ class MeshManager(
         const val SERVICE_ID = "com.offlinemesh.mesh.v1"
         const val WATCHDOG_INTERVAL_MS = 15_000L
         const val RECONNECT_INTERVAL_MS = 20_000L
+
+        /** Packet types a sender repeats until they are acknowledged. */
+        val RETRANSMITTED_TYPES = setOf(PacketType.TEXT, PacketType.VOICE, PacketType.FILE_CHUNK)
     }
 }

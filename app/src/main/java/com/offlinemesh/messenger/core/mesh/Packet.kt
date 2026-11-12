@@ -6,14 +6,19 @@ import java.io.ByteArrayOutputStream
 import java.nio.BufferUnderflowException
 import java.nio.ByteBuffer
 
-const val MESH_PROTOCOL_VERSION = 1
+/**
+ * Version 2 moves everything a receiver acts upon into the ciphertext ([SealedPayload]) and makes
+ * acknowledgements authenticated. Devices on version 1 and 2 do not exchange packets: a version 1
+ * device would display the sealed header as message text.
+ */
+const val MESH_PROTOCOL_VERSION = 2
 
 @Serializable
 enum class PacketType {
     /** Handshake: display name, identity key and pre-key bundle. Routed directly, ttl 1. */
     HELLO,
 
-    /** Delivery receipt for [PacketHeader.ackFor] (a msgId). */
+    /** Delivery receipt. What it acknowledges is inside the ciphertext, see [SealedHeader]. */
     ACK,
 
     /** Encrypted text message. */
@@ -57,7 +62,7 @@ data class PacketHeader(
     val expiresAt: Long,
     val ttl: Int = RoutingPolicy.DEFAULT_TTL,
     val hops: Int = 0,
-    /** msgId this packet acknowledges. */
+    /** Unused since protocol 2: the acknowledged ids are sealed. Kept so the header still parses. */
     val ackFor: String? = null,
     /** Free-form small metadata (attachment name/size/chunk index). */
     val meta: String = ""
@@ -150,9 +155,25 @@ object RoutingPolicy {
     const val MAX_TTL = 12
     const val PACKET_TTL_MS = 24 * 60 * 60 * 1000L
 
-    /** A packet is useless once its expiry has passed or its ttl ran out. */
+    /**
+     * How long a packet may wait on the sender or on a relay for its recipient to come into
+     * range. This used to be `DEFAULT_TTL * 60_000` - the hop limit mistaken for minutes - which
+     * expired every queued message after seven minutes.
+     */
+    const val STORE_FORWARD_MS = 24 * 60 * 60 * 1000L
+
+    /**
+     * A packet is useless once its expiry has passed or its ttl ran out. The expiry is written by
+     * the sender in a header any relay can edit, so a value further away than the store-and-forward
+     * window is not honoured either: nobody gets to park packets on other people's devices.
+     */
     fun isUsable(header: PacketHeader, now: Long): Boolean =
-        header.expiresAt > now && header.ttl > 0 && header.v == MESH_PROTOCOL_VERSION
+        header.expiresAt > now &&
+            header.expiresAt <= now + STORE_FORWARD_MS + MAX_EXPIRY_SKEW_MS &&
+            header.ttl in 1..MAX_TTL &&
+            header.v == MESH_PROTOCOL_VERSION
+
+    const val MAX_EXPIRY_SKEW_MS = 10 * 60_000L
 
     /** Never process our own packets that echo back to us. */
     fun isFromSelf(header: PacketHeader, myDeviceId: String): Boolean = header.from == myDeviceId
@@ -176,7 +197,7 @@ object RoutingPolicy {
     fun forwarded(header: PacketHeader): PacketHeader =
         header.copy(ttl = (header.ttl - 1).coerceAtLeast(0), hops = header.hops + 1)
 
-    fun expiryFrom(now: Long): Long = now + DEFAULT_TTL * 60_000L
+    fun expiryFrom(now: Long): Long = now + STORE_FORWARD_MS
 }
 
 /**

@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Only the directory that holds attachments the user explicitly opened in another app.
+    The rest of the cache (reassembly staging, decrypted upload/download temporaries) and the
+    files directory hold plaintext or key material and must never be reachable through a
+    content:// URI, whoever ends up calling getUriForFile.
+-->
 <paths>
-    <files-path name="shared" path="shared/" />
-    <files-path name="voice" path="voice/" />
-    <files-path name="incoming" path="incoming/" />
-    <cache-path name="cache" path="." />
+    <cache-path name="share" path="share/" />
 </paths>

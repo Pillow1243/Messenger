@@ -338,7 +338,15 @@ Deno.serve(async (req) => {
   }
 
   // Fetch active tokens on non-revoked devices.
-  const tokens: Record<string, unknown>[] = [];
+  type TokenRow = {
+    id: string;
+    user_id: string;
+    device_id: string;
+    provider: string;
+    token: string;
+    mm_devices: { id: string; revoked_at: string | null } | null;
+  };
+  const tokens: TokenRow[] = [];
   for (const ids of chunked(eligibleUserIds)) {
     const { data: page, error: tokensErr } = await admin
       .from("mm_push_tokens")
@@ -347,12 +355,12 @@ Deno.serve(async (req) => {
       .is("revoked_at", null)
       .gt("expires_at", now.toISOString());
     if (tokensErr) return lookupFailed("push_tokens", tokensErr);
-    tokens.push(...((page || []) as Record<string, unknown>[]));
+    tokens.push(...((page ?? []) as unknown as TokenRow[]));
   }
 
-  const activeTokens = tokens.filter((t: Record<string, unknown>) => {
-    const dev = t.mm_devices as { revoked_at: string | null } | null;
-    return dev && dev.revoked_at === null && t.provider === "fcm";
+  const activeTokens = tokens.filter((t) => {
+    const dev = t.mm_devices;
+    return !!dev && dev.revoked_at === null && t.provider === "fcm";
   });
 
   const fcmRaw = Deno.env.get("FCM_SERVICE_ACCOUNT_JSON");

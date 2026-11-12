@@ -104,7 +104,23 @@ class RoutingPolicyTest {
     }
 
     @Test
-    fun `expiry window is in the future`() {
-        assertTrue(RoutingPolicy.expiryFrom(now) > now)
+    fun `a queued packet waits a day for its recipient, not seven minutes`() {
+        // Regression: the expiry was computed as DEFAULT_TTL (a hop count) times one minute.
+        assertEquals(now + 24 * 60 * 60 * 1000L, RoutingPolicy.expiryFrom(now))
+        assertTrue(RoutingPolicy.isUsable(header(expiresAt = RoutingPolicy.expiryFrom(now)), now + 8 * 60_000))
+    }
+
+    @Test
+    fun `an expiry beyond the store-and-forward window is not honoured`() {
+        val far = now + RoutingPolicy.STORE_FORWARD_MS + RoutingPolicy.MAX_EXPIRY_SKEW_MS + 1
+        assertFalse(RoutingPolicy.isUsable(header(expiresAt = far), now))
+        assertFalse(RoutingPolicy.shouldForward(header(from = "device-x", to = "device-y", expiresAt = far), "device-b", now))
+        assertFalse(RoutingPolicy.isUsable(header(expiresAt = Long.MAX_VALUE), now))
+    }
+
+    @Test
+    fun `a hop limit above the maximum is not honoured`() {
+        assertFalse(RoutingPolicy.isUsable(header(ttl = RoutingPolicy.MAX_TTL + 1), now))
+        assertTrue(RoutingPolicy.isUsable(header(ttl = RoutingPolicy.MAX_TTL), now))
     }
 }
