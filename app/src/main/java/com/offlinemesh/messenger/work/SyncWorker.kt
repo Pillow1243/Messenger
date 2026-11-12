@@ -20,20 +20,30 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
 
     override suspend fun doWork(): Result {
         val app = applicationContext as MessengerApp
-        return try {
-            runCatching { app.files.cleanupStaleTempFiles() }
-            app.chats.retryPending()
-            if (app.online.isSignedIn && app.online.networkAvailable) {
-                runCatching { app.online.rotatePreKeysIfDue(force = false) }
-                runCatching { app.online.syncPushToken() }
-                runCatching { app.online.drainOutbox() }
-                runCatching { app.online.backfillAll() }
+        // Each step runs even if an earlier one failed, and a failed step is reported: the pass
+        // used to swallow every error except the first step's and then report success.
+        var failed = false
+        suspend fun step(name: String, block: suspend () -> Unit) {
+            try {
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed = true
+                Log.w(TAG, "Sync step '$name' failed", e)
             }
-            Result.success()
-        } catch (e: Exception) {
-            Log.w(TAG, "Sync pass failed", e)
-            Result.retry()
         }
+        step("temp files") { app.files.cleanupStaleTempFiles() }
+        step("retry") { app.chats.retryPending() }
+        if (app.online.isSignedIn && app.online.networkAvailable) {
+            step("pre-keys") { app.online.rotatePreKeysIfDue(force = false) }
+            step("push token") { app.online.syncPushToken() }
+            step("outbox") { app.online.drainOutbox() }
+            step("backfill") { app.online.backfillAll() }
+        }
+        // WorkManager re-runs a periodic request after its backoff on `retry`, and at the next
+        // period either way. Giving up after a few attempts avoids a tight loop on a permanent error.
+        return if (failed && runAttemptCount < 3) Result.retry() else Result.success()
     }
 
     companion object {

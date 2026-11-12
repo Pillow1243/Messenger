@@ -30,6 +30,7 @@ import com.offlinemesh.messenger.core.mesh.SealedPayload
 import com.offlinemesh.messenger.core.mesh.BoundedMemo
 import com.offlinemesh.messenger.core.mesh.TransmitLog
 import com.offlinemesh.messenger.domain.HybridReconciler
+import com.offlinemesh.messenger.domain.LikePattern
 import com.offlinemesh.messenger.domain.OnlineState
 import com.offlinemesh.messenger.domain.Transport
 import com.offlinemesh.messenger.domain.TransportContext
@@ -1443,13 +1444,23 @@ class ChatRepository(
                 true
             }
             message.filePath != null && File(message.filePath).exists() -> {
-                val file = File(message.filePath)
-                if (message.type == "VOICE") {
-                    sendVoice(targetConversationId, file, message.durationMs ?: 0L)
-                } else {
-                    sendFile(targetConversationId, file, message.fileName ?: file.name)
+                // The stored attachment is sealed with this device's key, and the send functions
+                // take a plaintext file that they consume. Handing them the stored file sent the
+                // recipient a file nobody but this phone can decrypt, and deleted the attachment
+                // of the message being forwarded. They get a decrypted temporary copy instead.
+                val plain = files.exportForMesh(File(message.filePath), message.id) ?: return false
+                try {
+                    if (message.type == MessageType.VOICE) {
+                        sendVoice(targetConversationId, plain, message.durationMs ?: 0L)
+                    } else {
+                        sendFile(targetConversationId, plain, message.fileName ?: "attachment")
+                    }
+                    true
+                } catch (e: IllegalArgumentException) {
+                    false
+                } finally {
+                    plain.delete()
                 }
-                true
             }
             else -> false
         }
@@ -1534,7 +1545,7 @@ class ChatRepository(
     suspend fun search(query: String): LocalSearchResult {
         val trimmed = query.trim()
         if (trimmed.length < 2) return LocalSearchResult(emptyList(), emptyList(), emptyList())
-        val pattern = "%" + trimmed.replace("%", "\\%").replace("_", "\\_") + "%"
+        val pattern = LikePattern.contains(trimmed)
         val foundMessages = messages.search(pattern, null)
         val foundConversations = conversations.search(pattern)
         val foundContacts = contacts.search(pattern)

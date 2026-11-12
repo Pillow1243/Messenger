@@ -84,7 +84,11 @@ interface ConversationDao {
         myRole: String = "member"
     )
 
-    @Query("SELECT * FROM conversations WHERE title LIKE :pattern OR lastMessagePreview LIKE :pattern ORDER BY lastMessageAt DESC")
+    /** [pattern] comes from `LikePattern.contains`; the escape character must stay one character. */
+    @Query(
+        "SELECT * FROM conversations WHERE title LIKE :pattern ESCAPE '\\' " +
+            "OR lastMessagePreview LIKE :pattern ESCAPE '\\' ORDER BY lastMessageAt DESC LIMIT 200"
+    )
     suspend fun search(pattern: String): List<ConversationEntity>
 }
 
@@ -195,7 +199,7 @@ interface MessageDao {
     suspend fun setStarred(id: String, starred: Boolean)
 
     @Query(
-        "SELECT * FROM messages WHERE deletedAt IS NULL AND body LIKE :pattern " +
+        "SELECT * FROM messages WHERE deletedAt IS NULL AND body LIKE :pattern ESCAPE '\\' " +
             "AND (:conversationId IS NULL OR conversationId = :conversationId) " +
             "ORDER BY timestamp DESC LIMIT 200"
     )
@@ -243,11 +247,13 @@ interface ContactDao {
     @Query("DELETE FROM contacts")
     suspend fun deleteAll()
 
+    // The escape clause used to read '\\' inside a raw string, which is two characters. SQLite
+    // rejects that when it evaluates the first row, so every local search failed as soon as one
+    // contact existed. The queries are ordinary strings now, where "\\" is one backslash.
     @Query(
-        """SELECT * FROM contacts
-           WHERE displayName LIKE :pattern ESCAPE '\\'
-              OR IFNULL(username, '') LIKE :pattern ESCAPE '\\'
-           ORDER BY displayName ASC LIMIT 200"""
+        "SELECT * FROM contacts WHERE displayName LIKE :pattern ESCAPE '\\' " +
+            "OR IFNULL(username, '') LIKE :pattern ESCAPE '\\' " +
+            "ORDER BY displayName ASC LIMIT 200"
     )
     suspend fun search(pattern: String): List<ContactEntity>
 }
@@ -524,7 +530,10 @@ interface PeerDao {
     @Query("SELECT * FROM peer_profiles")
     suspend fun profiles(): List<PeerProfileEntity>
 
-    @Query("SELECT * FROM peer_profiles WHERE displayName LIKE :pattern OR username LIKE :pattern LIMIT 50")
+    @Query(
+        "SELECT * FROM peer_profiles WHERE displayName LIKE :pattern ESCAPE '\\' " +
+            "OR username LIKE :pattern ESCAPE '\\' LIMIT 50"
+    )
     suspend fun searchProfiles(pattern: String): List<PeerProfileEntity>
 
     @Query("SELECT * FROM peer_devices WHERE userId = :userId ORDER BY revoked ASC, lastSeenAt DESC")

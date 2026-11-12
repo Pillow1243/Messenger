@@ -364,6 +364,39 @@ class MeshProtocolInstrumentedTest {
     }
 
     @Test
+    fun forwardingAnAttachmentSendsTheFileItselfAndKeepsTheOriginal() = runBlocking {
+        val a = node("Alice")
+        val b = node("Bob")
+        val c = node("Carol")
+        connect(a, b)
+        connect(b, c)
+        val bytes = Random(7).nextBytes(FileChunker.CHUNK_SIZE + 4321)
+        val source = File(root, "forward-source.bin").apply {
+            parentFile?.mkdirs()
+            writeBytes(bytes)
+        }
+        a.chats.sendFile(b.id, source, "notes.pdf")
+        hub.pump()
+        val received = b.messagesWith(a.id).single()
+        val original = File(requireNotNull(received.filePath))
+
+        assertTrue(b.chats.forwardMessage(received.id, c.id))
+        hub.pump()
+
+        // Carol gets the document, not Bob's locally sealed copy of it.
+        val forwarded = c.messagesWith(b.id).single()
+        assertEquals("notes.pdf", forwarded.fileName)
+        val atCarol = requireNotNull(c.files.exportForOpening(File(requireNotNull(forwarded.filePath)), "notes.pdf"))
+        assertArrayEquals(bytes, atCarol.readBytes())
+
+        // Bob still has the message he forwarded, and no decrypted copy is left lying around.
+        assertTrue("the forwarded message keeps its attachment", original.isFile)
+        val atBob = requireNotNull(b.files.exportForOpening(original, "notes.pdf"))
+        assertArrayEquals(bytes, atBob.readBytes())
+        assertTrue(File(b.root, "cache/plain_staging").list().orEmpty().isEmpty())
+    }
+
+    @Test
     fun aFileTransferCannotWriteOutsideItsStagingDirectory() = runBlocking {
         val a = node("Alice")
         val b = node("Bob")

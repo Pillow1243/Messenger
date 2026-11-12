@@ -580,7 +580,9 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
     /** On-device search over decrypted data plus server search over public accounts/channels. */
     fun search(query: String) = viewModelScope.launch {
         _searching.value = true
-        _localResults.value = app.chats.search(query)
+        runCatching { app.chats.search(query) }
+            .onSuccess { _localResults.value = it }
+            .onFailure { android.util.Log.w("AppViewModel", "Local search failed", it) }
         if (query.trim().length >= 2 && app.online.isSignedIn) {
             runCatching { app.chats.searchAccounts(query.trim()) }
                 .onSuccess { _accountResults.value = it }
