@@ -277,15 +277,14 @@ jobs:
             "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
             -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
             >/tmp/emulator.log 2>&1 &
-          emu_pid=$!
+          # The launcher forks before it starts the VM, so its own pid is not a reliable liveness
+          # signal; the qemu process is.
           boot=""
           for _ in $(seq 1 90); do
             boot=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
             [ "$boot" = "1" ] && break
-            if ! kill -0 "$emu_pid" 2>/dev/null; then
-              echo "::error title=Emulator::the emulator process exited during boot"
-              tail -c 3000 /tmp/emulator.log |
-                while IFS= read -r line; do echo "::error title=Emulator::${line}"; done
+            if ! pgrep -f "qemu-system" >/dev/null 2>&1; then
+              echo "::error title=Emulator::no qemu process is running, the emulator exited during boot"
               exit 1
             fi
             sleep 5
