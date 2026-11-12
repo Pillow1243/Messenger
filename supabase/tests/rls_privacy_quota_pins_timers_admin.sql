@@ -248,6 +248,13 @@ begin
     'Q-1: clients must not write usage counters';
   assert pg_temp.refused($q$select mm_private.rebuild_media_usage()$q$),
     'Q-1: clients must not call the rebuild helper';
+  assert pg_temp.refused(format($q$select * from public.mm_media_objects_of(%L)$q$, v_alice)),
+    'clients must not list storage objects through the account-deletion helper';
+  reset role;
+  set local role service_role;
+  select count(*) into v_count from public.mm_media_objects_of(v_alice);
+  assert v_count = 2, 'the service role lists every mm-media object the account owns, and no avatar';
+  reset role;
 
   ------------------------------------------------------------ D-1 disappearing messages
   perform pg_temp.act_as(v_alice, s_alice);

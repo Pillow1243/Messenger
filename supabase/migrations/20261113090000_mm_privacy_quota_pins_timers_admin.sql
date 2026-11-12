@@ -312,6 +312,24 @@ begin
   return coalesce(v_count, 0) < 20000 and coalesce(v_bytes, 0) < 5368709120;  -- 5 GiB
 end $$;
 
+-- Every mm-media object an account owns, for the account-deletion Edge Function (service role
+-- only). mm_attachments is not a reliable source: a row can be deleted while the blob remains.
+create or replace function public.mm_media_objects_of(p_user uuid)
+returns table (object_path text)
+language plpgsql stable security definer set search_path = public, storage, pg_temp as $$
+begin
+  if p_user is null or to_regclass('storage.objects') is null then
+    return;
+  end if;
+  return query
+    select o.name::text
+      from storage.objects o
+     where o.bucket_id = 'mm-media'
+       and (o.owner = p_user or o.owner_id::text = p_user::text);
+end $$;
+revoke all on function public.mm_media_objects_of(uuid) from public, anon, authenticated;
+grant execute on function public.mm_media_objects_of(uuid) to service_role;
+
 revoke all on function mm_private.media_object_size(jsonb) from public, anon, authenticated;
 revoke all on function mm_private.track_media_usage() from public, anon, authenticated;
 revoke all on function mm_private.rebuild_media_usage() from public, anon, authenticated;
