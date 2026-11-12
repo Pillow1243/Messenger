@@ -32,6 +32,8 @@ import androidx.navigation.navArgument
 import com.offlinemesh.messenger.R
 import com.offlinemesh.messenger.presentation.AppViewModel
 import com.offlinemesh.messenger.presentation.screens.AccountScreen
+import com.offlinemesh.messenger.presentation.screens.ArchivedChatsScreen
+import com.offlinemesh.messenger.presentation.screens.SavedMessagesScreen
 import com.offlinemesh.messenger.presentation.screens.CallOverlay
 import com.offlinemesh.messenger.presentation.screens.ChannelsScreen
 import com.offlinemesh.messenger.presentation.screens.ChatScreen
@@ -53,6 +55,8 @@ object Routes {
     const val CONTACT = "contact/{deviceId}"
     const val SETTINGS = "settings"
     const val SEARCH = "search"
+    const val ARCHIVED = "archived"
+    const val SAVED = "saved"
     const val CHANNELS = "channels"
     const val ACCOUNT = "account"
     const val ARG_CONVERSATION = "conversationId"
@@ -150,7 +154,25 @@ fun NavGraph(
                     onOpenNearby = { navigateToTab(navController, Routes.NEARBY) },
                     onOpenSearch = { navController.navigate(Routes.SEARCH) },
                     onOpenChannels = { navController.navigate(Routes.CHANNELS) },
-                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) }
+                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) },
+                    onOpenArchived = { navController.navigate(Routes.ARCHIVED) },
+                    onOpenSaved = { navController.navigate(Routes.SAVED) }
+                )
+            }
+
+            composable(Routes.ARCHIVED) {
+                ArchivedChatsScreen(
+                    vm = vm,
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { id -> navController.navigate(Routes.chat(id)) }
+                )
+            }
+
+            composable(Routes.SAVED) {
+                SavedMessagesScreen(
+                    vm = vm,
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { id -> navController.navigate(Routes.chat(id)) }
                 )
             }
 

@@ -55,6 +55,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4.0.1
 
+      # Cheap, dependency-free checks that catch the classic "forgot to translate" regression
+      # before Gradle even starts.
+      - name: English / Persian string parity
+        run: ./tools/check_string_parity.sh
+
+      - name: No committed credentials
+        run: ./tools/check_no_secrets.sh
+
       # Gradle's own log is only reachable through the artifact blob, which some CI
       # environments cannot fetch. Re-emitting the compiler/lint errors as workflow
       # annotations makes the failure readable directly from the check run.

@@ -268,4 +268,22 @@
     <string name="action_save">ذخیره</string>
     <string name="delete_conversation">حذف گفتگو</string>
     <string name="delete_conversation_confirm">این گفتگو و پیام‌های آن از این دستگاه حذف شوند؟</string>
+
+    <!-- بایگانی، بازفرست و پیام‌های ذخیره‌شده -->
+    <string name="action_back">بازگشت</string>
+    <string name="unknown_peer">ناشناس</string>
+    <string name="more_actions">بیشتر</string>
+    <string name="chat_archive">بایگانی گفتگو</string>
+    <string name="chat_unarchive">خروج از بایگانی</string>
+    <string name="chat_forward">بازفرست</string>
+    <string name="chat_delete_for_me">حذف برای من</string>
+    <string name="forward_no_targets">هنوز گفتگوی دیگری برای بازفرست وجود ندارد.</string>
+    <string name="archived_chats">گفتگوهای بایگانی‌شده</string>
+    <string name="archived_empty_title">گفتگوی بایگانی‌شده‌ای نیست</string>
+    <string name="archived_empty_body">گفتگوهایی که بایگانی می‌کنید از فهرست اصلی خارج می‌شوند و با همهٔ پیام‌ها اینجا می‌مانند.</string>
+    <string name="saved_messages">پیام‌های ذخیره‌شده</string>
+    <string name="saved_empty_title">هنوز چیزی ذخیره نشده است</string>
+    <string name="saved_empty_body">با ستاره‌کردن یک پیام، آن را اینجا نگه می‌دارید. پیام‌های ذخیره‌شده هرگز از این دستگاه خارج نمی‌شوند.</string>
+    <string name="saved_remove">حذف</string>
+    <string name="saved_media_placeholder">پیوست</string>
 </resources>

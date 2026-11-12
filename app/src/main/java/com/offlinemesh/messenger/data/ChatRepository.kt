@@ -101,6 +101,7 @@ class ChatRepository(
     private val relays = db.relayDao()
     private val transfers = db.fileTransferDao()
     private val peers = db.peerDao()
+    private val outbox = db.outboxDao()
     private val json = PacketCodec.json
 
     @Volatile private var lastTypingSentAt = 0L
@@ -1037,6 +1038,80 @@ class ChatRepository(
 
     suspend fun setStarred(messageId: String, starred: Boolean) =
         messages.setStarred(messageId, starred)
+
+    // ------------------------------------------------------------------ archive & saved
+
+    fun observeArchivedConversations(): Flow<List<ConversationEntity>> = conversations.observeArchived()
+
+    fun observeArchivedCount(): Flow<Int> = conversations.observeArchivedCount()
+
+    fun observeStarredMessages(): Flow<List<MessageEntity>> = messages.observeStarred()
+
+    /**
+     * Hides a chat from the main list without deleting anything.
+     *
+     * Archive state is intentionally device-local: the server's `mm_conversations.archived_at`
+     * column is owner-scoped, and a plain member cannot write it (the RLS update policy requires
+     * an admin role), so mirroring the flag would fail silently for most users. Keeping it in
+     * SQLCipher gives every device a predictable, private layout instead of a fake server sync.
+     */
+    suspend fun setConversationArchived(conversationId: String, archived: Boolean): Boolean {
+        if (conversations.getById(conversationId) == null) return false
+        conversations.setArchived(conversationId, archived)
+        return true
+    }
+
+    /**
+     * "Delete for me": drops the message from this device's database and cancels any pending
+     * upload for it. Nothing is sent to the server, so the peer keeps its copy — the counterpart
+     * of `deleteForEveryone()`.
+     */
+    suspend fun deleteForMe(messageId: String): Boolean {
+        val message = messages.getById(messageId) ?: return false
+        outbox.deleteForMessage(messageId)
+        messages.deleteLocal(messageId)
+        if (message.conversationId.isNotBlank()) {
+            val latest = messages.latestForConversation(message.conversationId)
+            conversations.updateLastMessage(
+                message.conversationId,
+                latest?.timestamp ?: 0L,
+                latest?.let { previewOf(it.body.ifBlank { it.fileName.orEmpty() }) } ?: "",
+                0
+            )
+        }
+        return true
+    }
+
+    /**
+     * Forwards a message into another conversation as a new message owned by this device: text
+     * bodies are re-sent as text, locally held media is re-sent from the original file (so the
+     * forward works offline over the mesh too) and messages whose payload is not available on this
+     * device report `false` instead of silently doing nothing.
+     */
+    suspend fun forwardMessage(messageId: String, targetConversationId: String): Boolean {
+        val message = messages.getById(messageId) ?: return false
+        if (message.deletedAt != null) return false
+        val target = conversations.getById(targetConversationId) ?: return false
+        if (target.id == message.conversationId) return false
+
+        return when {
+            message.type == "TEXT" -> {
+                if (message.body.isBlank()) return false
+                sendText(targetConversationId, message.body)
+                true
+            }
+            message.filePath != null && File(message.filePath).exists() -> {
+                val file = File(message.filePath)
+                if (message.type == "VOICE") {
+                    sendVoice(targetConversationId, file, message.durationMs ?: 0L)
+                } else {
+                    sendFile(targetConversationId, file, message.fileName ?: file.name)
+                }
+                true
+            }
+            else -> false
+        }
+    }
 
     suspend fun editMessage(messageId: String, newBody: String): Boolean {
         val message = messages.getById(messageId) ?: return false

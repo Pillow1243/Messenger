@@ -18,6 +18,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Groups
@@ -27,6 +30,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -66,7 +71,9 @@ fun ChatsScreen(
     onOpenNearby: () -> Unit,
     onOpenSearch: () -> Unit = {},
     onOpenChannels: () -> Unit = {},
-    onOpenAccount: () -> Unit = {}
+    onOpenAccount: () -> Unit = {},
+    onOpenArchived: () -> Unit = {},
+    onOpenSaved: () -> Unit = {}
 ) {
     val conversations by vm.conversations.collectAsStateWithLifecycle()
     val contacts by vm.contacts.collectAsStateWithLifecycle()
@@ -74,6 +81,8 @@ fun ChatsScreen(
     val network by vm.networkAvailable.collectAsStateWithLifecycle()
     val meshRunning by vm.meshRunning.collectAsStateWithLifecycle()
     var showGroupDialog by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    val archivedCount by vm.archivedCount.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -96,6 +105,34 @@ fun ChatsScreen(
                     }
                     IconButton(onClick = onOpenAccount) {
                         Icon(Icons.Filled.Person, contentDescription = stringResource(R.string.nav_account))
+                    }
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_actions))
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.saved_messages)) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.BookmarkBorder, contentDescription = null)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onOpenSaved()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.archived_chats)) },
+                                leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onOpenArchived()
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -123,6 +160,34 @@ fun ChatsScreen(
                         meshRunning = meshRunning,
                         onOpenAccount = onOpenAccount
                     )
+                }
+                if (archivedCount > 0) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onOpenArchived)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Archive,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.size(14.dp))
+                            Text(
+                                text = stringResource(R.string.archived_chats),
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = archivedCount.toString(),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
                 if (conversations.isEmpty()) {
                     item {
