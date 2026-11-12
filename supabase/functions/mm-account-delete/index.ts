@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { consumeRateLimit } from "../_shared/rate_limit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +46,16 @@ Deno.serve(async (req) => {
   const admin = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  // Deletion is destructive and rate limited (3 attempts per hour per account) so a stolen
+  // session cannot be used to hammer the cleanup path. Fails closed.
+  const limit = await consumeRateLimit(admin, uid, "account_delete", 3, 3600);
+  if (!limit.allowed) {
+    if (limit.error === "rate_limited") {
+      return json(429, { error: "rate_limited" });
+    }
+    return json(503, { error: "rate_limiter_unavailable" });
+  }
 
   // 1. Delete encrypted media blobs uploaded by this user in mm-media.
   const { data: attachments } = await admin

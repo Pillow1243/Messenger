@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { consumeRateLimit } from "../_shared/rate_limit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -55,32 +56,16 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // Rate limit: max 30 credential mints per 5 minutes per authenticated user.
   const now = new Date();
-  const { data: rlRow } = await admin
-    .from("mm_rate_limits")
-    .select("window_start, count")
-    .eq("user_id", callerId)
-    .eq("bucket", "turn_creds")
-    .maybeSingle();
-  if (rlRow) {
-    const ageMs = now.getTime() - new Date(rlRow.window_start).getTime();
-    if (ageMs < 300_000 && rlRow.count >= 30) {
+
+  // Rate limit: max 30 credential mints per 5 minutes per authenticated user. The counter is
+  // consumed by mm_consume_rate_limit_as(); a failure to reach the limiter fails closed.
+  const limit = await consumeRateLimit(admin, callerId, "turn_creds", 30, 300);
+  if (!limit.allowed) {
+    if (limit.error === "rate_limited") {
       return json(429, { error: "rate_limited" });
     }
-    await admin.from("mm_rate_limits").upsert({
-      user_id: callerId,
-      bucket: "turn_creds",
-      window_start: ageMs < 300_000 ? rlRow.window_start : now.toISOString(),
-      count: ageMs < 300_000 ? rlRow.count + 1 : 1,
-    });
-  } else {
-    await admin.from("mm_rate_limits").insert({
-      user_id: callerId,
-      bucket: "turn_creds",
-      window_start: now.toISOString(),
-      count: 1,
-    });
+    return json(503, { error: "rate_limiter_unavailable" });
   }
 
   // Option 1: Cloudflare Realtime TURN short-lived credentials.

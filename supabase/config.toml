@@ -1,0 +1,66 @@
+# Supabase CLI / Edge Function configuration for the Messenger backend.
+#
+# Two things matter here and are deliberately explicit:
+#
+# 1. `schemas` is the PostgREST exposed-schema list. It contains **only** `public`. The
+#    internal authorisation helpers live in `mm_private` (see migration
+#    20261112070000_mm_social_graph_authz.sql) and are therefore not routable as RPC endpoints:
+#    even though they exist in the database, `POST /rest/v1/rpc/mm_private_*` cannot reach them.
+#    Never add `mm_private` here.
+#
+# 2. `verify_jwt = true` on every function. The documented deployment previously ran all three
+#    with `--no-verify-jwt`, which meant the gateway let anonymous requests through and the only
+#    protection was the in-function `auth.getUser()` call. Both layers are now enabled:
+#      * the gateway rejects requests without a syntactically valid, unexpired project JWT,
+#      * each function still resolves the caller with `auth.getUser()` and authorises the action
+#        against the database, because a valid JWT is not the same thing as a permission.
+#    `mm-push-dispatch` is invoked with the service-role JWT (a valid project JWT), so it keeps
+#    working; it never trusts the JWT for *actor* identity, it uses the resolved user.
+#
+# Deploy: `supabase functions deploy --project-ref <ref>` (config is read automatically).
+
+project_id = "lnhmbjqjfrnqkpsjpszb"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.migrations]
+enabled = true
+schema_paths = ["supabase/migrations"]
+
+[realtime]
+enabled = true
+
+[storage]
+enabled = true
+file_size_limit = "256MiB"
+
+[auth]
+enabled = true
+site_url = "https://lnhmbjqjfrnqkpsjpszb.supabase.co"
+enable_signup = true
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+[functions.mm-account-delete]
+verify_jwt = true
+entrypoint = "./functions/mm-account-delete/index.ts"
+
+[functions.mm-turn-credentials]
+verify_jwt = true
+entrypoint = "./functions/mm-turn-credentials/index.ts"
+
+[functions.mm-push-dispatch]
+verify_jwt = true
+entrypoint = "./functions/mm-push-dispatch/index.ts"
