@@ -236,6 +236,8 @@ jobs:
             tail -c 3000 "$log" | while IFS= read -r line; do echo "::error title=SDK install::${line}"; done
             exit 1
           fi
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           tail -3 "$log"
 
       - name: Create AVD
@@ -253,16 +255,19 @@ jobs:
 
       - name: Boot emulator
         run: |
-          set -x
-          adb start-server
-          nohup "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
+          set -uo pipefail
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          [ -x "$ADB" ] || { echo "::error title=Emulator::adb is missing from $ANDROID_HOME"; exit 1; }
+          "$ADB" start-server
+          "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
             -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
             >/tmp/emulator.log 2>&1 &
+          emu_pid=$!
           boot=""
           for _ in $(seq 1 90); do
-            boot=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            boot=$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
             [ "$boot" = "1" ] && break
-            if ! pgrep -f "qemu-system" >/dev/null 2>&1; then
+            if ! kill -0 "$emu_pid" 2>/dev/null; then
               echo "::error title=Emulator::the emulator process exited during boot"
               tail -c 3000 /tmp/emulator.log |
                 while IFS= read -r line; do echo "::error title=Emulator::${line}"; done
@@ -276,11 +281,10 @@ jobs:
               while IFS= read -r line; do echo "::error title=Emulator::${line}"; done
             exit 1
           fi
-          adb -s emulator-5554 shell settings put global window_animation_scale 0
-          adb -s emulator-5554 shell settings put global transition_animation_scale 0
-          adb -s emulator-5554 shell settings put global animator_duration_scale 0
-          adb -s emulator-5554 shell pm list packages >/dev/null
-          echo "emulator booted: $(adb -s emulator-5554 shell getprop ro.build.version.sdk)"
+          "$ADB" -s emulator-5554 shell settings put global window_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global transition_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global animator_duration_scale 0
+          echo "emulator booted: API $("$ADB" -s emulator-5554 shell getprop ro.build.version.sdk | tr -d '\r')"
 
       - name: Run instrumentation tests
         run: |
@@ -294,7 +298,9 @@ jobs:
 
       - name: Stop emulator
         if: always()
-        run: adb -s emulator-5554 emu kill || true
+        run: |
+          "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 emu kill || true
+          pkill -f "qemu-system" || true
 
       # Emitting the JUnit results as annotations makes the outcome readable from the checks API,
       # and a missing report becomes an explicit failure instead of a silent "no artifacts"
