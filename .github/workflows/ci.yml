@@ -238,20 +238,34 @@ jobs:
           fi
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          # Pin the AVD location: avdmanager and the emulator disagree about the default on some
+          # runner images, which produced an "Unknown AVD name" boot failure with no other clue.
+          mkdir -p "$HOME/android-avd"
+          echo "ANDROID_AVD_HOME=$HOME/android-avd" >> "$GITHUB_ENV"
           tail -3 "$log"
 
       - name: Create AVD
         run: |
+          set -uo pipefail
           AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           [ -x "$AVDMANAGER" ] || AVDMANAGER="$(command -v avdmanager)"
+          AVD_HOME="$HOME/android-avd"
+          mkdir -p "$AVD_HOME"
           log=/tmp/avd-create.log
-          if ! echo no | "$AVDMANAGER" create avd --force --name ci-api30 \
-              --package "system-images;android-30;google_apis;x86_64" \
-              --device pixel_5 >"$log" 2>&1; then
-            tail -c 3000 "$log" | while IFS= read -r line; do echo "::error title=AVD::${line}"; done
+          if ! echo no | ANDROID_AVD_HOME="$AVD_HOME" "$AVDMANAGER" create avd --force \
+              --name ci-api30 --package "system-images;android-30;google_apis;x86_64" \
+              --device pixel_5 --path "$AVD_HOME/ci-api30.avd" >"$log" 2>&1; then
+            tail -c 2000 "$log" | while IFS= read -r line; do echo "::error title=AVD::${line}"; done
             exit 1
           fi
-          tail -3 "$log"
+          # A silently empty AVD directory would only surface much later as "Unknown AVD name".
+          if ! ANDROID_AVD_HOME="$AVD_HOME" "$AVDMANAGER" list avd -c | grep -qx ci-api30; then
+            echo "::error title=AVD::avdmanager reported success but no ci-api30 AVD exists in $AVD_HOME"
+            tail -c 2000 "$log" | while IFS= read -r line; do echo "::error title=AVD::${line}"; done
+            ls -la "$AVD_HOME" || true
+            exit 1
+          fi
+          echo "created AVD ci-api30 in $AVD_HOME"
 
       - name: Boot emulator
         run: |
@@ -259,7 +273,8 @@ jobs:
           ADB="$ANDROID_HOME/platform-tools/adb"
           [ -x "$ADB" ] || { echo "::error title=Emulator::adb is missing from $ANDROID_HOME"; exit 1; }
           "$ADB" start-server
-          "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
+          ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$HOME/android-avd}" \
+            "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
             -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
             >/tmp/emulator.log 2>&1 &
           emu_pid=$!
