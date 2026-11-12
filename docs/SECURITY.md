@@ -75,7 +75,22 @@ message metadata beyond what routing requires (`sender_id`, `conversation_id`, `
 
 * **RLS on every `mm_*` table.** Filtered policies per table, no `USING (true)` anywhere.
 * **Grants**: `anon` has no privileges on `mm_*` at all (verified: assertions expect
-  `insufficient_privilege`), `authenticated` gets the minimum set per table.
+  `insufficient_privilege`). `authenticated` holds an explicit allow-list of statements and columns
+  per table (`docs/SUPABASE.md`, "Direct table access"); conversations, memberships, devices,
+  pre-keys, calls, reports and push tokens are writable through RPCs only. Until migration
+  `20261112120000` this line was not true: the tables carried the platform default `GRANT ALL`.
+* **The RPCs cannot be bypassed.** The rules they enforce (block list, device cap, sender-key
+  rotation on member removal, terminal call states, rate limits) used to be skippable by writing
+  the row directly; see `AUDIT.md` A.6.
+* **Device revocation ends the session.** The auth session that registered a device is recorded;
+  revoking the device tombstones that session, which can then neither register a device nor read
+  or write conversation data. Linking the installation again needs a fresh sign-in.
+* **Messages written by clients are validated on insert**: allow-listed kinds (no forged system
+  notices), server-assigned `sent_at`, the caller's own live device, replies and attachments from
+  the same conversation, and edits only by the author of the target. The app re-checks edit
+  authorship on receipt, because the server is not trusted with content.
+* **Encrypted media uploads are bounded**: 5 GiB and 20 000 objects per account, object names of
+  the form `<conversation>/<object>` only.
 * **Authorization is re-checked server-side** inside `SECURITY DEFINER` functions
   (`mm_start_direct`, `mm_create_group`, `mm_join_channel`, `mm_mark_read`, `mm_add_reaction`,
   `mm_claim_prekey`, `mm_consume_rate_limit`, ...). The client never decides permissions.
@@ -102,7 +117,8 @@ message metadata beyond what routing requires (`sender_id`, `conversation_id`, `
 The full authorization matrix is executable: `supabase/tests/rls_policies.sql` creates two users,
 a conversation, a message and then asserts positive and negative cases (outsider reads 0 rows,
 forged receipts rejected, pre-key single use, rate limiter rejects the third call, anon has no
-grants). It passes on the live project.
+grants). Together with `rls_social_graph.sql` and `rls_write_path_hardening.sql` it runs against a
+disposable PostgreSQL in CI on every push; it is not run against the live project.
 
 ## 5. Transport policy
 
@@ -142,7 +158,12 @@ The mesh never consults Supabase, and losing the network never disables a radio.
   `20261112070000`, negative suite `supabase/tests/rls_social_graph.sql`), gateway JWT verification
   on the three Edge Functions (S-3, `supabase/config.toml`) and the silently broken Edge Function
   rate limiter (S-4, `_shared/rate_limit.ts` + `mm_consume_rate_limit_as`).
-* **Now enforced continuously:** both authorisation suites, migration idempotency, Deno type-check
+* **Fixed (third pass, repository only):** the direct-write path around the RPCs, findings
+  W-1 … W-19 in `AUDIT.md` A.6 (migration `20261112120000`, suite
+  `supabase/tests/rls_write_path_hardening.sql`), and four client defects found by replaying the
+  app's requests. **Neither this migration nor `20261112070000` is applied to the live project
+  yet**; that is an owner action.
+* **Now enforced continuously:** all three authorisation suites, migration idempotency, Deno type-check
   of the functions, English/Persian string parity, licence inventory and a credential scan run in CI
   on every push (`.github/workflows/ci.yml`, `backend.yml`). Details in [`AUDIT.md`](AUDIT.md), Part A.
 * **Not an independent audit of the cryptography.** This review was performed by the project's own engineering process.

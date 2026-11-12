@@ -97,22 +97,32 @@ export MESSENGER_KEY_PASSWORD="..."
 
 ## 4. Deploying the security hardening to the live project
 
-The repository is ahead of the deployed backend: migration `20261112070000` and the updated Edge
-Functions exist in Git but have **not** been pushed to `lnhmbjqjfrnqkpsjpszb` (the sandbox that
-prepared them has no route to `supabase.co`). Two commands close the gap, and both are additive:
+The repository is ahead of the deployed backend. On 2026-11-12 the live project
+`lnhmbjqjfrnqkpsjpszb` had six migrations applied (through `20261112035022`) and the three `mm-*`
+Edge Functions at version 1 with `verify_jwt = false`. Not yet applied:
+
+| Migration | Closes |
+| --- | --- |
+| `20261112070000_mm_social_graph_authz.sql` | S-2 (social-graph enumeration), service-role rate limiter |
+| `20261112120000_mm_write_path_hardening.sql` | W-1 … W-19 (direct writes around the RPCs), and the constraint that rejected photo/video/audio messages |
+
+Both are idempotent, touch only `mm_*` objects, the `mm_private` schema and the policies of the two
+`mm-*` buckets, and delete no row. Apply them **in this order**:
 
 ```bash
-# 1) Apply the additive migration (mm_private schema, caller-scoped helpers,
-#    service-role rate limiter). No table, column or existing row is modified.
 supabase link --project-ref lnhmbjqjfrnqkpsjpszb
-supabase db push
+supabase db push          # shows the pending files first; confirm that only these two are listed
 
-# 2) Redeploy the three functions; supabase/config.toml now sets verify_jwt = true for each,
-#    so the gateway flag changes with the deployment, not by hand.
+# Redeploy the three functions; supabase/config.toml sets verify_jwt = true for each,
+# so the gateway flag changes with the deployment, not by hand.
 supabase functions deploy mm-account-delete
 supabase functions deploy mm-turn-credentials
 supabase functions deploy mm-push-dispatch
 ```
+
+If `supabase db push` lists more than those two files (the live history was written through the
+dashboard, so its version numbers may not match the file names), do not force it: paste the two
+files into the SQL editor instead, one after the other. Re-running any Messenger migration is safe.
 
 Verify afterwards (read-only, from the SQL editor or `psql`):
 
@@ -121,20 +131,30 @@ Verify afterwards (read-only, from the SQL editor or `psql`):
 select has_schema_privilege('authenticated', 'mm_private', 'USAGE');           -- must be false
 select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'mm_private' and has_function_privilege('anon', p.oid, 'EXECUTE'); -- must be 0
--- the subject limiter is service_role only
+-- the limiters are not callable by clients
 select has_function_privilege('authenticated',
         'public.mm_consume_rate_limit_as(text,text,integer,integer)', 'EXECUTE');   -- must be false
+select has_function_privilege('authenticated',
+        'public.mm_consume_rate_limit(text,integer,integer)', 'EXECUTE');           -- must be false
+-- RPC-only tables are not directly writable, anon holds nothing
+select has_table_privilege('authenticated', 'public.mm_conversation_members', 'INSERT'),  -- false
+       has_table_privilege('authenticated', 'public.mm_devices', 'UPDATE'),               -- false
+       has_table_privilege('authenticated', 'public.mm_calls', 'UPDATE'),                 -- false
+       has_table_privilege('anon', 'public.mm_messages', 'SELECT');                       -- false
+-- exactly one call-state function is left
+select count(*) from pg_proc where proname = 'mm_set_call_state';                         -- 1
 ```
 
-Then run both suites against a branch database (`docs/SUPABASE.md` → Tests) before relying on the
-deployment. If the migration has to be rolled back for any reason:
+Then do the two-device pass in `docs/TWO_DEVICE_VALIDATION.md`: it is the first time these rules
+meet the real platform (PostgREST, Storage, real access tokens) rather than the test stub.
 
-```sql
-drop schema mm_private cascade;
-```
-
-and restore the previous helper bodies from migrations `20261111120000` / `20261111120200`. No data
-is lost by the rollback because the migration never touches a table.
+**Rollback.** Neither migration modifies or deletes data, so there is nothing to restore. If the
+write-path migration blocks something legitimate, the narrow remedy is to grant the missing
+statement on that one table (for example `grant update (some_column) on public.mm_x to
+authenticated;`) and report it, not to revert the file. Reverting `20261112070000` would mean
+restoring the previous helper bodies from `20261111120000` / `20261111120200`; do not
+`drop schema mm_private cascade` once `20261112120000` is applied, because the policies and RPCs
+now depend on it.
 
 > Shared project warning: this database also hosts another application. Only `mm_*` objects (and the
 > `mm-media` / `mm-avatars` buckets) belong to Messenger. Never modify `luma_*` tables, functions or

@@ -7,7 +7,7 @@ is stated in Part A where it still matters.
 
 ---
 
-## Part A — Current findings (2026-11-12, second pass)
+## Part A — Current findings (2026-11-12, second and third pass)
 
 Method: the source tree on this branch, every migration, the three Edge Function sources, the CI
 workflows, and — because the audit environment has no route to `supabase.co` — a **real PostgreSQL 16
@@ -30,7 +30,8 @@ branch, not locally (see A.5).
 | T-3 | Low | **Fixed** | No automated check that the English and Persian resource files cover the same keys, and no check that every declared dependency has a licence entry. Both are now CI steps (`tools/check_string_parity.sh`, `tools/license_inventory.py`). |
 | B-1 | Medium | **Resolved for this milestone** | Android compilation, unit tests, lint, debug/demo packaging and the Room schema check cannot run in the audit sandbox (no JDK, no Android SDK, no Maven/Gradle network). They run on GitHub Actions; this branch's `CI` run is the build evidence, and the backend work was verified locally against real PostgreSQL. |
 | L-1 | Medium | **Analysed, owner decision open** | `libsignal-android` is AGPL-3.0 and is linked into the APK. `THIRD_PARTY_NOTICES.md` now contains the full inventory, the obligations, and the decisions the owner must take. No licence was chosen on the owner's behalf. |
-| L-2 | Medium | **Open** | There is no in-app licences/attribution screen, so the SQLCipher BSD notice and the AGPL offer are only satisfied by the repository documents. Required before public distribution; tracked in `docs/ROADMAP.md`. |
+| L-2 | Medium | **Fixed** (earlier pass) | The in-app licences screen exists (`presentation/screens/LicencesScreen.kt`, asset built by `tools/build_licence_asset.py`). An earlier revision of this table still listed it as missing. |
+| W-1 … W-19 | **High** (several) | **Fixed in the repository, not yet applied to the live project** | Third pass: the write path. A signed-in client could skip the RPCs and write rows directly. See [A.6](#a6-third-pass-2026-11-12-the-write-path). |
 | F-1 | — | Not implemented | Group calls (need an SFU), stories, polls, scheduled/silent messages, bots and Mini Apps, search filters, pinned messages, disappearing messages, chat folders. Listed honestly in `docs/ROADMAP.md`. |
 
 ### A.2 Verified as correct (no change needed)
@@ -46,7 +47,8 @@ branch, not locally (see A.5).
 * `mm-claim_prekey_bundle` is single-use and refuses anonymous callers.
 * Group member removal rotates `sender_key_epoch` and `distribution_id`; device revocation rotates
   the group keys and revokes push tokens (asserted in `rls_policies.sql`).
-* Call state is terminal: an ended call cannot be resurrected by a late `active` update.
+* Call state is terminal **through the RPC**: an ended call cannot be resurrected by a late
+  `active` update. (The third pass found that the row could still be rewritten directly; see W-17.)
 * Client-side media encryption is streaming AES-256-GCM with a per-file key; the bucket is private.
 
 ### A.3 What was changed in this milestone
@@ -66,9 +68,11 @@ branch, not locally (see A.5).
 
 ### A.4 Remaining work, in priority order
 
+0. **Apply migrations `20261112070000` and `20261112120000` to the live project and redeploy the
+   three Edge Functions** (owner action, see A.6 "Deployment"). Until then the live database still
+   has every weakness listed in S-2 and A.6.
 1. T-2: two-device validation of online media, sync, calls and mesh↔online switching.
-2. L-2: in-app licences screen (SQLCipher BSD notice + AGPL offer), then L-1: the owner's licence
-   decision.
+2. L-1: the owner's licence decision (the in-app licences screen, L-2, is done).
 3. T-1: the remaining instrumentation coverage (navigation, notifications, Room migrations);
    the storage and Keystore cases are already in CI.
 4. F-1: product features, in the order given in `docs/ROADMAP.md` (search filters, pinned messages,
@@ -79,14 +83,110 @@ branch, not locally (see A.5).
 
 * The sandbox has **no JDK, no Android SDK, no Docker and no route to Maven/Google/`supabase.co`**.
   Anything Android is therefore verified by GitHub Actions on this branch, and anything about the
-  live project is verified against a faithful local PostgreSQL reproduction. No query was executed
-  against the live Supabase project in this milestone; the production database is untouched.
+  live project is verified against a local PostgreSQL reproduction. The second pass ran no query
+  against the live project; the third pass (A.6) read its migration history, one catalog query and
+  the Edge Function list through the Supabase connector, and wrote nothing.
 * The new migration has **not been pushed to the live project**. It is additive and data-preserving,
   and it must be applied with `supabase db push` (or the SQL editor) by the owner — see
   `docs/SUPABASE.md`.
 * The Edge Functions have not been redeployed; until they are, the live deployment keeps the old
   rate-limit behaviour and `verify_jwt = false`. `docs/OWNER_SETUP.md` lists the deploy command.
 * Security review is internal. No third-party cryptographic or application-security audit exists.
+
+### A.6 Third pass (2026-11-12): the write path
+
+**Question asked:** the earlier passes checked what a user can *read* and which functions `anon`
+can call. This pass asked what a signed-in user with a modified client can *write* when it ignores
+the app and talks to PostgREST directly.
+
+**Method.** Every finding below was reproduced before it was fixed: a disposable PostgreSQL 16 with
+the Supabase stub and all earlier migrations, statements executed as the `authenticated` role with
+forged-but-valid JWT claims for four test users. The same statements are now assertions in
+`supabase/tests/rls_write_path_hardening.sql`, which also replays the statements the Android client
+issues (including PostgREST's `ON CONFLICT` forms) to prove the fix does not break the app.
+
+**Root cause.** The tables carried the platform default `GRANT ALL … TO authenticated`, and several
+RLS policies checked *who* was writing but not *what* was written. The security-definer RPCs
+enforced the real rules — block lists, the device cap, sender-key rotation, terminal call states,
+rate limits — but nothing forced a client to use them.
+
+| ID | Severity | What a signed-in user could do (reproduced) | Fix (migration `20261112120000`) |
+| --- | --- | --- | --- |
+| W-1 | **High, functional** | Nothing malicious: the `kind` check on `mm_messages` rejected `image`, `video`, `audio` and `text-edit`, which are exactly what the app sends for photos, videos, audio files and edits. Those uploads failed with a constraint violation; only `text`, `file` and `voice` were accepted. | Constraint lists the kinds the client really uses. |
+| W-2 | Medium, functional | `mm_set_call_state(uuid,text)` and `mm_set_call_state(uuid,text,text default null)` coexisted. A two-argument call is ambiguous in SQL (reproduced: "function … is not unique"); PostgREST refuses to choose between such overloads, so answering or declining without an end reason is expected to fail. Not reproduced through a real PostgREST (none in the sandbox). | Two-argument overload dropped. A call can also no longer be moved back to `ringing`, and the end reason is bounded. |
+| W-3 | **High** | Revoking a lost phone did nothing lasting: the revoked device called `mm_register_device` again, which cleared `revoked_at`, and carried on reading and sending. | The auth session that registers a device is recorded; revocation tombstones it (`mm_revoked_sessions`). A tombstoned session cannot register any device, read conversations, messages or envelopes, post, or revoke the owner's other devices (`device_revoked`, P0019). A fresh sign-in may link the same installation again, which counts against the device cap and re-keys the owner's groups. |
+| W-4 | **High** | `mm_revoke_device(<any device uuid>)` only scoped its `UPDATE` to the caller; the `DELETE`s that followed removed **another user's** one-time pre-keys and undelivered envelopes. Any user could silently destroy anyone's pending messages. | Ownership is checked first; nothing happens for a device the caller does not own. |
+| W-5 | Medium | `mm_rotate_user_groups(<any user>)` was callable by everyone: forced re-keying of every group a victim belongs to, on demand. | Internal only (no API-role EXECUTE). |
+| W-6 | Medium | `mm_consume_rate_limit(action, max, window)` let the client choose the action name and its limits: arbitrary rows in `mm_rate_limits` (a 100 kB action name was accepted) and pre-spending of real limits. | Internal only. |
+| W-7 | Medium | No cap on one-time pre-keys: 2 001 rows of 100 kB each were inserted directly in one request. | Pre-keys are written through the RPCs only; at most 200 unclaimed per device, with a size check on the key. |
+| W-8 | Low | `mm_start_direct_conversation` accepted a peer id that does not exist and had no limiter. | Peer must have a profile; limited. |
+| W-9 | Medium | `mm_set_read(my conversation, <message of a conversation I am not in>)` wrote a read receipt on the foreign message. | The message must belong to the stated conversation. |
+| W-10 | **High** | Direct writes to `mm_conversations` / `mm_conversation_members`: (a) insert a `direct` conversation with a chosen `direct_key` and thereby squat the pair of two *other* users; (b) as owner of a direct chat, add a third member — a silent eavesdropper on new messages; (c) as admin, add anyone, skipping the block list, the member cap and the limiter; (d) delete a membership **without** the sender-key rotation, leaving the removed member with a valid group key; (e) rewrite `owner_id`, `type`, `encryption_version`, `sender_key_epoch`. | No direct INSERT/DELETE on either table and no UPDATE on `mm_conversations`; membership changes go through the RPCs, which rotate keys. |
+| W-11 | Low | `mm_search_users('__')` and `'%%'` matched every profile (LIKE wildcards were passed through), an enumeration primitive. | Wildcards are escaped; a literal prefix search still works. |
+| W-12 | Low | Reports could be inserted directly, unthrottled, about targets the reporter cannot see. | RPC only; the target must be visible to the reporter; an open report about the same target is updated instead of duplicated; limited. |
+| W-13 | **High** | A member could insert rows into `mm_messages` with `kind = 'system'` (forged "X left the group"-style notices), a back-dated `sent_at`, another user's device id, a `reply_to` or `attachment_id` from a different conversation, and — the serious one — a `text-edit` targeting **somebody else's** message, which recipients' devices applied without checking the author. | A guard trigger for client inserts: allow-listed kinds, server-assigned `sent_at`, clamped client timestamp, own live device, same-conversation reply and attachment, author-only edits, bounded `meta`. `sent_at`, `edited_at`, `deleted_at` are not insertable. The Android client independently refuses an edit that does not come from the author (`EditPolicy`). |
+| W-14 | Medium | Unlimited uploads into the private media bucket (cost and storage exhaustion); object names of any shape. | Per-user quota (5 GiB / 20 000 objects) and a strict `<conversation>/<object>` name in the storage INSERT policy; attachment records must point into their own conversation prefix and the Messenger bucket. |
+| W-15 | Low | A group admin could change another member's mute / notification settings. | Only the member's own row, and only the three personal columns. |
+| W-16 | Medium | A direct INSERT into `mm_devices` skipped the five-device cap and the limiter; a direct UPDATE could un-revoke a device or swap its identity key. | Devices are written through `mm_register_device` / `mm_revoke_device` only. |
+| W-17 | Medium | Any member of the conversation could UPDATE `mm_calls` / `mm_call_participants` directly: resurrect an ended call, change the initiator, mark the other side as declined. | Read-only for clients; the state machine lives in `mm_set_call_state`. |
+| W-18 | Medium | The *sender* of a contact request could set it to `accepted`; a blocked user could still send requests. | Only the recipient may answer; block list enforced on insert. |
+| W-19 | Medium | Envelopes: `recipient_device` was not checked against `recipient_user_id`, and `sender_device` could name anybody's device. | Recipient device must be a live device of the stated recipient, who must be a member; `sender_device` must be the caller's. Envelopes, sender-key distributions and attachments are immutable. |
+
+Also closed in the same change: typing indicators could be written with an arbitrary expiry (a
+one-year "typing…" was accepted, including from a blocked user); call-signal payloads were
+unbounded; a profile owner could update any column of their profile row.
+
+**Defects in the Android client found by replaying its requests**
+
+| ID | Finding | Fix |
+| --- | --- | --- |
+| C-1 | Retried uploads of envelopes, sender-key distributions and attachment records used `merge-duplicates`, i.e. `ON CONFLICT DO UPDATE`, which the database refused (there never was an UPDATE policy). A retry after a dropped connection therefore failed instead of being a no-op. | Idempotent inserts (`ignore-duplicates`). |
+| C-2 | Editing a message PATCHed `kind = 'text-edited'`, a column that was never updatable and a value the constraint rejects, so the "edited" marker never reached the server. | Only `edited_at` is patched; the text travels as the encrypted `text-edit` message. |
+| C-3 | Hang-up was signalled with kind `hangup`, which `mm_call_signals_kind_check` rejects; the peer only learned about the end of the call from the call-state row. | Sent as `bye` (the kind the backend also accepts for already-ended calls); `hangup` is still understood on receipt. |
+| C-4 | An incoming `text-edit` was applied to whichever local message its `target` named, without checking that the editor wrote it. | `EditPolicy`: same device, or another device known to belong to the same account; never an outgoing, deleted or non-text message; same conversation. Unit-tested. |
+
+**Verification**
+
+* Backend: `supabase/tests/local/run.sh` — stub, eight migrations, three suites, migrations
+  re-applied (idempotency). Run locally on PostgreSQL 16.2 and by the `Backend` workflow on
+  `postgres:16`. The new suite has 101 assertions, 51 of them refusals; for the 37 that accept
+  "any error or zero rows" the *reason* for each refusal was inspected once (permission, policy or
+  the intended error), so that none passes because of a typo in the test.
+* Android: compiled, unit-tested and linted by the `CI` workflow on this branch; nothing Android
+  can be built in the audit sandbox.
+* **Not verified:** behaviour against the real Supabase platform (PostgREST overload resolution,
+  the `session_id` claim in real access tokens, Storage's own use of `storage.objects.owner` /
+  `owner_id`). The stub models these; the two-device pack in `TWO_DEVICE_VALIDATION.md` is where
+  they get exercised for real.
+
+**Deployment (owner action — nothing was applied to the live project)**
+
+The live project `lnhmbjqjfrnqkpsjpszb` was only *read* in this pass (`list_migrations`, one catalog
+query, `list_edge_functions`). It has six migrations applied, through `20261112035022`. Still to
+apply, in order: `20261112070000_mm_social_graph_authz.sql`, then
+`20261112120000_mm_write_path_hardening.sql`; then redeploy the three `mm-*` Edge Functions (they
+are at version 1 with `verify_jwt = false`). Both migrations are idempotent, touch only `mm_*`
+objects and the two `mm-*` bucket policies, and delete no data. The core tables were empty when
+checked. Either order of client and database rollout is safe: an old client against the new
+database fails in the same places it already failed (C-1, C-2), and the new client against the old
+database is no worse than the old one.
+
+**Left open on purpose**
+
+* **Profile visibility through contacts.** Adding any user id as a contact makes that profile
+  readable (display name, username, avatar, bio). The id has to be known first and the same fields
+  are returned by username search, so this is Low; changing it means deciding whether contacts
+  require consent, which is a product decision.
+* **Quota cost.** `mm_private.media_quota_ok` sums the caller's objects in `storage.objects` on
+  every upload. That table has no index on the owner columns and belongs to the platform, so the
+  check is linear in the size of the bucket. Fine at the current scale; needs a counter table
+  before the bucket holds millions of objects.
+* **Error codes.** The schema's custom SQLSTATEs start at `P0001`, which collide with PL/pgSQL's
+  own (`P0002` no_data_found, `P0004` assert_failure). PostgREST passes them through unchanged, so
+  clients are unaffected, but inside PL/pgSQL `WHEN OTHERS` does not catch `P0004`
+  ("device_not_found"). Renumbering would change the client contract; not done.
+* **Session tombstones** are keyed on the `session_id` claim. A token without that claim (custom
+  JWTs) cannot be tombstoned; such a caller can still not re-activate a revoked device.
 
 ## Part B — Historical audit (2026-11-11, base `5880f98`)
 

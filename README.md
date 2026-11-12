@@ -171,6 +171,7 @@ push with a `postgres:16` service container:
 | Suite | Covers |
 | --- | --- |
 | `supabase/tests/rls_policies.sql` | the whole permission matrix: membership, envelopes, pre-keys, Sender Keys rotation, calls, storage prefixes, blocks, rate limiting, `anon` denial |
+| `supabase/tests/rls_write_path_hardening.sql` | findings W-1 … W-19: replays the app's own writes (must succeed) and the attack matrix around the RPCs (must be refused), plus privilege invariants |
 | `supabase/tests/rls_social_graph.sql` | the S-2 hardening: no relationship may be probed for a third party, `mm_private` is unreachable by API roles, legitimate co-member access still works, plus an RLS-policy-coverage audit |
 
 The harness also re-applies every migration to prove idempotency, and `backend.yml` type-checks the
