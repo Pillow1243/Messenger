@@ -333,6 +333,20 @@ begin
   end;
   assert v_failed, 'anon must hold zero privileges on mm_sender_key_distributions';
 
+  -- 8b. Function privileges (migration 20261112035022): no mm_* function is executable by anon,
+  --     and the pre-key claim refuses a request without a session even when the device exists.
+  assert (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname like 'mm\_%'
+             and has_function_privilege('anon', p.oid, 'EXECUTE')) = 0,
+         'anon must not be able to execute any mm_* function';
+  v_failed := false;
+  begin
+    perform public.mm_claim_prekey_bundle(v_alice_device);
+  exception when others then
+    v_failed := true;
+  end;
+  assert v_failed, 'pre-key claim must fail for an anonymous caller';
+
   -- 9. Block semantics & internal rate limit helper
   execute 'reset role';
   perform set_config('request.jwt.claims',

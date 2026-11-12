@@ -116,3 +116,14 @@ The mesh never consults Supabase, and losing the network never disables a radio.
   Supabase + Firebase client options at build time; see `docs/OWNER_SETUP.md`). Without them, the
   app honestly reports `UNCONFIGURED` and relies on Realtime + periodic `SyncWorker` backfill.
 * **Telemetry is opt-in by absence**: nothing is collected, no analytics SDK is bundled.
+
+## 7. Review of 2026-11-12
+
+* **Fixed:** `anon` could execute every `mm_*` RPC, including the one-time pre-key claim, because
+  PostgreSQL grants EXECUTE to `PUBLIC` by default. Migration `20261112035022` revokes that and adds
+  an authentication guard to the claim. Details and the open items (social-graph helpers, unverified
+  `verify_jwt` settings) are in [`AUDIT.md`](AUDIT.md), Part A.
+* **Not an independent audit.** This review was performed by the project's own engineering process.
+  It is not a third-party cryptographic or security audit, and the project does not claim one.
+* **Group calls** are not implemented (the sentence above about them being disabled at both layers
+  is accurate for the UI and the call RPCs; there is no SFU).

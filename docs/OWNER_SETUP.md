@@ -67,7 +67,7 @@ supabase secrets set --project-ref lnhmbjqjfrnqkpsjpszb \
   TURN_TTL_SECONDS="3600"
 ```
 
-Alternatively, for static-credential TURN providers, set `TURN_URLS`, `TURN_USERNAME`, and `TURN_CREDENTIAL`. Never place TURN credentials in Android source code or `BuildConfig`.
+Alternatively, for static-credential TURN providers, set `TURN_URLS`, `TURN_USERNAME`, and `TURN_CREDENTIAL`. The function also reads `CF_TURN_TOKEN_ID` / `CF_TURN_API_TOKEN` (Cloudflare Calls) and `METERED_DOMAIN` / `METERED_API_KEY` (Metered). Never place TURN credentials in Android source code or `BuildConfig`.
 
 ---
 
@@ -75,10 +75,13 @@ Alternatively, for static-credential TURN providers, set `TURN_URLS`, `TURN_USER
 
 `release` builds enable full R8 shrinking and obfuscation (`isMinifyEnabled = true`, `isShrinkResources = true`). Production signing is activated only when all four signing environment variables are provided in GitHub Actions Secrets:
 
-* `KEYSTORE_BASE64` (base64-encoded `.jks` / `.keystore`)
-* `KEYSTORE_PASSWORD`
-* `KEY_ALIAS`
-* `KEY_PASSWORD`
+* `MESSENGER_KEYSTORE_BASE64` (base64-encoded `.jks` / `.keystore`)
+* `MESSENGER_KEYSTORE_PASSWORD`
+* `MESSENGER_KEY_ALIAS`
+* `MESSENGER_KEY_PASSWORD`
+
+The release workflow (`.github/workflows/release.yml`) runs only for `v*` tags or a manual dispatch,
+and stops with an error if any of the four is missing. It never falls back to the debug key.
 
 For local signed release builds:
 
@@ -87,5 +90,5 @@ export MESSENGER_KEYSTORE_PATH="/secure/path/release.keystore"
 export MESSENGER_KEYSTORE_PASSWORD="..."
 export MESSENGER_KEY_ALIAS="offlinemesh"
 export MESSENGER_KEY_PASSWORD="..."
-./gradlew assembleRelease bundleRelease
+./gradlew assembleRelease
 ```

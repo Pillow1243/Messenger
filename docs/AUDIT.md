@@ -1,4 +1,75 @@
-# Repository audit — initial state
+# Repository audit
+
+This file has two parts. **Part A** is the current state (2026-11-12) and is the one to act on.
+**Part B** is the historical audit of 2026-11-11 (base `5880f98`). Its findings were written against
+that older code and are kept only as a record; some have since been fixed, and the status of each
+is stated in Part A where it still matters.
+
+---
+
+## Part A — Current findings (2026-11-12)
+
+Method: the source tree at `25e6564` (`main`), the five committed migrations, the three Edge
+Function sources, the CI workflows, and the **live** Supabase project `lnhmbjqjfrnqkpsjpszb`
+(read-only queries plus rolled-back probes). Limits of this audit are listed in section A.5.
+
+### A.1 Findings by severity
+
+| ID | Severity | Status | Finding |
+| --- | --- | --- | --- |
+| S-1 | **High** | **Fixed** (migration `20261112035022`) | Every `mm_*` function was EXECUTE-able by `anon`, and `mm_claim_prekey_bundle` returned a one-time pre-key to an anonymous caller. Its ownership check evaluated to NULL when `auth.uid()` was null. Confirmed with a probe as the `anon` role; after the fix the same probe fails with `permission denied`, and the owner's signed-in claim still works. |
+| S-2 | Medium | **Open** | Social-graph helpers `mm_is_member(conv, user)`, `mm_shares_conversation(a, b)` and `mm_is_blocked(a, b)` are `SECURITY DEFINER` and accept arbitrary ids. Any signed-in user can learn whether two other users share a conversation or have blocked each other. Acceptance: callers may only ask about their own id, or the function returns false; RLS and RPC tests still pass. Blocked on a test-first change because the helpers back RLS policies. |
+| S-3 | Low | Open | `mm-account-delete`, `mm-turn-credentials` and `mm-push-dispatch` are deployed with `verify_jwt = false`. Each validates the caller with `auth.getUser()` first, so this is not an open door, but it is a weaker posture than the gateway check. Acceptance: enable `verify_jwt` after a staging test confirms the app's requests still pass. |
+| D-1 | Medium | **Fixed in this change** | Documentation drift. README claimed calls, online media and Sender Keys were missing; ARCHITECTURE said Room v2; SUPABASE listed 21 tables, a non-existent `mm_signing_keys`, and a non-existent `mm-attachments` bucket; OWNER_SETUP named secrets the release workflow does not read. Corrected from the source and the live project. |
+| D-2 | Low | **Fixed in this change** | Release signing secret names in README and OWNER_SETUP did not match `release.yml`; README said the release published an AAB, but the workflow builds only an APK. |
+| T-1 | Medium | Open | Test coverage: 15 JVM test classes. No Android instrumentation tests exist. The Supabase suite runs only by hand, not in CI. The authorization fix in S-1 has assertions in the suite but was not re-run after the edit (see `SUPABASE.md`, Tests). |
+| T-2 | Medium | Open | No physical-device validation has been performed for the current release. `TWO_DEVICE_VALIDATION.md` lists what has to be run; none of it is recorded as passed here. |
+| B-1 | Low | Open | Build could not be executed in the audit sandbox (no JDK, no Gradle distribution, no Maven access). Kotlin source was not modified in this change; the CI run of this branch is the build evidence. |
+| L-1 | Medium | Open (owner decision) | `libsignal-android` is AGPL-3.0. Distributing a binary that includes it carries AGPL obligations. The project has no `LICENSE` file and no third-party notice file. The owner must choose the licensing model; this repository does not choose one. |
+| F-1 | — | Not implemented | Group calls (need an SFU), stories, polls, scheduled and silent messages, bots and Mini Apps. These are roadmap items, documented as such in the README. |
+
+### A.2 Verified as correct (no change needed)
+
+* Release signing refuses to publish a debug-signed artefact: `release.yml` requires all four
+  secrets, and its last step rejects a certificate whose subject is `CN=Android Debug`.
+* The release build is R8-minified (`isMinifyEnabled = true`). CI's demo build is also a release-type
+  build with R8, so R8 runs on every push; the earlier claim that R8 was off is stale.
+* The Room schema is exported (`app/schemas`), and CI fails on schema drift.
+* All 25 `mm_*` tables have RLS enabled; the live project has no `mm-media` public access.
+* The `mm-account-delete`, `mm-turn-credentials` and `mm-push-dispatch` sources validate the caller
+  before acting, and the service-role key is read only from the function environment.
+* The live migration history contains the five repository migrations (`mm_identity_graph` …
+  `mm_phase2_*`) plus the hotfix. The `luma_*` objects belong to another application and were not
+  touched.
+
+### A.3 What was changed in this change
+
+* `supabase/migrations/20261112035022_mm_security_hotfix_anon_rpc_prekey.sql` (applied to the live
+  project; the same SQL is in the repository).
+* `supabase/tests/rls_policies.sql`: assertions for anon function privileges and the anonymous
+  pre-key claim (section 8b).
+* Documentation: `README.md`, `docs/SUPABASE.md`, `docs/ARCHITECTURE.md`, this file.
+
+### A.4 Remaining work, in priority order
+
+1. S-2: restrict the social-graph helpers to the caller's own id (with tests).
+2. T-1: run the Supabase suite in CI against a branch database, add Android instrumentation tests.
+3. T-2: two-device validation of online media, sync, calls and Mesh/online switching.
+4. L-1: owner decision on licensing and third-party notices.
+5. S-3: enable `verify_jwt` on the three Edge Functions after staging verification.
+6. F-1: features listed as not implemented.
+
+### A.5 Limits of this audit
+
+* The Android app was not compiled or run. Its findings come from reading the source.
+* No physical device was available to the audit.
+* The live Supabase checks were read-only, or performed inside transactions that were rolled back,
+  except for the one migration listed in A.3.
+
+---
+
+## Part B — Historical audit (2026-11-11, base `5880f98`)
+
 
 Date: 2026-11-11 · Base commit: `5880f98` (`main`) · Branch: `arena/939f33dc-messenger`
 
