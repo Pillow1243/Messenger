@@ -204,9 +204,6 @@ jobs:
           sudo udevadm control --reload-rules || echo "::warning::udevadm control failed"
           sudo udevadm trigger --name-match=kvm || echo "::warning::udevadm trigger failed"
           ls -l /dev/kvm || echo "::warning::/dev/kvm is absent on this runner"
-          # These two lines only exist so a broken runner image is diagnosable from the checks API.
-          sudo -n true && echo "::warning::diag sudo=ok" || echo "::warning::diag sudo=unavailable"
-          echo "::warning::diag user=$(id -un) groups=$(id -Gn) image=$(lsb_release -ds 2>/dev/null)"
 
       # Compiling the instrumentation APK is cheap and catches test-source errors long before an
       # emulator boots. Gradle's own errors are surfaced as annotations so a failure is readable
@@ -223,27 +220,85 @@ jobs:
 
       # These tests cover what JVM tests cannot: SQLCipher's native library, the real Keystore
       # wrap, and the on-disk encryption property (no SQLite header, no plaintext canary).
-      - name: Run on-device tests
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          profile: pixel_5
-          disable-animations: true
-          emulator-options: -no-window -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          script: |
-            ./gradlew --no-daemon --console=plain -PextraAbis=x86_64 connectedDebugAndroidTest 2>&1 |
-              tee device.log || {
-                grep -E "^e: |error:|FAILURE:|There were failing tests|Tests on" device.log | head -40 |
-                  while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done
-                exit 1
-              }
+      #
+      # The emulator is driven explicitly rather than through a third-party action: the action
+      # this repository used to pin failed during its own SDK installation, and its diagnostics
+      # only ever appeared in a job log. Every command below is wrapped so a failure becomes a
+      # check annotation with the tail of the relevant log attached.
+      - name: Install emulator and system image
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
+          log=/tmp/sdk-install.log
+          { yes | "$SDKMANAGER" --licenses; } >"$log" 2>&1 || true
+          if ! "$SDKMANAGER" --install "platform-tools" "emulator" \
+              "system-images;android-30;google_apis;x86_64" >>"$log" 2>&1; then
+            tail -c 3000 "$log" | while IFS= read -r line; do echo "::error title=SDK install::${line}"; done
+            exit 1
+          fi
+          tail -3 "$log"
 
-      # The emulator action reports failures only in its own log, which is not reachable from
-      # every environment. Re-emitting the JUnit results as annotations makes the outcome readable
-      # from the checks API, and a missing report becomes an explicit failure instead of a silent
-      # "no artifacts" warning.
+      - name: Create AVD
+        run: |
+          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          [ -x "$AVDMANAGER" ] || AVDMANAGER="$(command -v avdmanager)"
+          log=/tmp/avd-create.log
+          if ! echo no | "$AVDMANAGER" create avd --force --name ci-api30 \
+              --package "system-images;android-30;google_apis;x86_64" \
+              --device pixel_5 >"$log" 2>&1; then
+            tail -c 3000 "$log" | while IFS= read -r line; do echo "::error title=AVD::${line}"; done
+            exit 1
+          fi
+          tail -3 "$log"
+
+      - name: Boot emulator
+        run: |
+          set -x
+          adb start-server
+          nohup "$ANDROID_HOME/emulator/emulator" -avd ci-api30 -port 5554 \
+            -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
+            >/tmp/emulator.log 2>&1 &
+          boot=""
+          for _ in $(seq 1 90); do
+            boot=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            [ "$boot" = "1" ] && break
+            if ! pgrep -f "qemu-system" >/dev/null 2>&1; then
+              echo "::error title=Emulator::the emulator process exited during boot"
+              tail -c 3000 /tmp/emulator.log |
+                while IFS= read -r line; do echo "::error title=Emulator::${line}"; done
+              exit 1
+            fi
+            sleep 5
+          done
+          if [ "$boot" != "1" ]; then
+            echo "::error title=Emulator::the emulator did not finish booting within 450s"
+            tail -c 3000 /tmp/emulator.log |
+              while IFS= read -r line; do echo "::error title=Emulator::${line}"; done
+            exit 1
+          fi
+          adb -s emulator-5554 shell settings put global window_animation_scale 0
+          adb -s emulator-5554 shell settings put global transition_animation_scale 0
+          adb -s emulator-5554 shell settings put global animator_duration_scale 0
+          adb -s emulator-5554 shell pm list packages >/dev/null
+          echo "emulator booted: $(adb -s emulator-5554 shell getprop ro.build.version.sdk)"
+
+      - name: Run instrumentation tests
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --console=plain -PextraAbis=x86_64 connectedDebugAndroidTest \
+            2>&1 | tee device.log || {
+              grep -E "^e: |error:|FAILURE:|There were failing tests|Tests on|junit.framework" device.log |
+                head -40 | while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done
+              exit 1
+            }
+
+      - name: Stop emulator
+        if: always()
+        run: adb -s emulator-5554 emu kill || true
+
+      # Emitting the JUnit results as annotations makes the outcome readable from the checks API,
+      # and a missing report becomes an explicit failure instead of a silent "no artifacts"
+      # warning, so a green run always means the tests really ran.
       - name: Summarise instrumentation results
         if: always()
         run: |
