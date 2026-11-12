@@ -312,8 +312,14 @@ jobs:
           echo "::error title=Emulator::adb: $("$ADB" version 2>&1 | head -2 | tr '\n' ' ')"
           echo "::error title=Emulator::devices: $("$ADB" devices 2>&1 | tr '\n' ' ')"
           echo "::error title=Emulator::avd home: $(ls "$HOME/.android/avd" 2>&1 | tr '\n' ' ')"
-          tail -15 /tmp/emulator.log 2>&1 |
-            while IFS= read -r line; do echo "::error title=Emulator log::${line}"; done
+          # One annotation carrying the tail of the log, newline-escaped: per-line annotations
+          # are capped per step, which would hide the interesting end of the log.
+          python3 - <<'PYEOF'
+          import pathlib
+          tail = pathlib.Path("/tmp/emulator.log").read_text(errors="replace")[-3500:]
+          escaped = tail.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print(f"::error title=Emulator log::{escaped}")
+          PYEOF
           exit 1
 
       - name: Run instrumentation tests
