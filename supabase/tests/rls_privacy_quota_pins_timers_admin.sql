@@ -1,9 +1,9 @@
--- Regression suite for migration 20261113090000 (audit section A.7: P-1..P-3, Q-1, D-1, G-1).
+-- Regression suite for migration 20261113090000 (audit section A.7: P-1..P-3, Q-1, DM-1, G-1).
 --
 -- The P-1, P-2 and P-3 reads below were observed SUCCEEDING against the schema as of
 -- 20261112120000 while impersonating the `authenticated` role (one-sided contact entry, public
 -- channel co-subscription, other members' mute state), and failing after this migration. The
--- Q-1, D-1, pin and G-1 blocks specify behaviour that did not exist before.
+-- Q-1, DM-1, pin and G-1 blocks specify behaviour that did not exist before.
 -- Runs inside BEGIN/ROLLBACK and leaves no residue.
 
 begin;
@@ -256,60 +256,60 @@ begin
   assert v_count = 2, 'the service role lists every mm-media object the account owns, and no avatar';
   reset role;
 
-  ------------------------------------------------------------ D-1 disappearing messages
+  ------------------------------------------------------------ DM-1 disappearing messages
   perform pg_temp.act_as(v_alice, s_alice);
   insert into public.mm_messages (conversation_id, sender_id, sender_device_id, client_msg_id, kind, meta, sent_at_ms)
   values (v_direct, v_alice, 'pq-device-alice', 'pq-plain', 'text', '{}', 1) returning id, expires_at into v_msg, v_expires;
   assert v_expires is null, 'no timer: messages do not expire';
   assert public.mm_set_message_ttl(v_direct, 60) = 60, 'either side of a direct chat may set the timer';
   assert pg_temp.refused(format($q$select public.mm_set_message_ttl(%L, 2)$q$, v_direct)),
-    'D-1: a timer below 5 s is refused';
+    'DM-1: a timer below 5 s is refused';
   assert pg_temp.refused(format($q$update public.mm_conversations set message_ttl_seconds = 5 where id = %L$q$, v_direct)),
-    'D-1: the timer is not directly writable';
+    'DM-1: the timer is not directly writable';
   assert pg_temp.refused(format(
     $q$insert into public.mm_messages (conversation_id, sender_id, sender_device_id, client_msg_id, kind, meta, sent_at_ms, expires_at)
        values (%L, %L, 'pq-device-alice', 'pq-forged', 'text', '{}', 1, now() + interval '10 years')$q$,
-    v_direct, v_alice)), 'D-1: a client must not supply its own expires_at';
+    v_direct, v_alice)), 'DM-1: a client must not supply its own expires_at';
   insert into public.mm_messages (conversation_id, sender_id, sender_device_id, client_msg_id, kind, meta, sent_at_ms)
   values (v_direct, v_alice, 'pq-device-alice', 'pq-timed', 'text', '{}', 1)
   returning id, expires_at into v_msg2, v_expires;
   assert v_expires between now() + interval '55 seconds' and now() + interval '65 seconds',
-    'D-1: the server stamps expires_at from the conversation timer';
+    'DM-1: the server stamps expires_at from the conversation timer';
   insert into public.mm_messages (conversation_id, sender_id, sender_device_id, client_msg_id, kind, meta, sent_at_ms)
   values (v_direct, v_alice, 'pq-device-alice', 'pq-edit', 'text-edit',
           jsonb_build_object('target', v_msg2), 1)
   returning id into v_edit;
   assert (select expires_at from public.mm_messages where id = v_edit) = v_expires,
-    'D-1: an edit expires together with its target';
+    'DM-1: an edit expires together with its target';
   assert pg_temp.refused(format($q$update public.mm_messages set expires_at = null where id = %L$q$, v_msg2)),
-    'D-1: the sender must not be able to extend a message';
+    'DM-1: the sender must not be able to extend a message';
   insert into public.mm_message_envelopes (message_id, recipient_user_id, recipient_device, cipher_type, ciphertext)
   select v_msg2, v_bob, d.id, 3, 'Y2lwaGVydGV4dA==' from public.mm_devices d where d.user_id = v_bob;
   perform pg_temp.act_as(v_bob, s_bob);
   select count(*) into v_count from public.mm_message_envelopes where message_id = v_msg2;
   assert v_count = 1, 'the recipient reads the envelope while the message is live';
   assert pg_temp.refused(format($q$select public.mm_set_message_ttl(%L, 60)$q$, v_group)),
-    'D-1: a plain group member must not change the timer';
+    'DM-1: a plain group member must not change the timer';
   perform pg_temp.act_as(v_mallory, s_mallory);
   assert pg_temp.refused(format($q$select public.mm_set_message_ttl(%L, 60)$q$, v_direct)),
-    'D-1: an outsider must not change the timer';
+    'DM-1: an outsider must not change the timer';
 
   reset role;
   update public.mm_messages set expires_at = now() - interval '1 second' where id in (v_msg2, v_edit);
   perform pg_temp.act_as(v_bob, s_bob);
   select count(*) into v_count from public.mm_messages where id in (v_msg2, v_edit);
-  assert v_count = 0, 'D-1: an expired message is unreadable before the purge runs';
+  assert v_count = 0, 'DM-1: an expired message is unreadable before the purge runs';
   select count(*) into v_count from public.mm_message_envelopes where message_id = v_msg2;
-  assert v_count = 0, 'D-1: envelopes of an expired message are unreadable before the purge runs';
+  assert v_count = 0, 'DM-1: envelopes of an expired message are unreadable before the purge runs';
   perform pg_temp.act_as(v_alice, s_alice);
   select count(*) into v_count from public.mm_messages where id = v_msg2;
-  assert v_count = 0, 'D-1: the sender cannot read an expired message either';
+  assert v_count = 0, 'DM-1: the sender cannot read an expired message either';
   assert pg_temp.refused(format($q$select public.mm_pin_message(%L, true)$q$, v_msg2)),
-    'D-1: an expired message cannot be pinned';
+    'DM-1: an expired message cannot be pinned';
   assert pg_temp.refused($q$select public.mm_purge_expired_messages()$q$),
-    'D-1: clients must not call the purge';
+    'DM-1: clients must not call the purge';
   reset role;
-  assert public.mm_purge_expired_messages() = 2, 'D-1: the purge removes exactly the expired rows';
+  assert public.mm_purge_expired_messages() = 2, 'DM-1: the purge removes exactly the expired rows';
   assert not exists (select 1 from public.mm_messages where id in (v_msg2, v_edit)), 'purged rows are gone';
   assert not exists (select 1 from public.mm_message_envelopes where message_id = v_msg2), 'envelopes cascade';
   assert exists (select 1 from public.mm_messages where id = v_msg), 'unexpired rows survive the purge';

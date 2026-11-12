@@ -11,7 +11,7 @@ The state below was read from the live project on 2026-11-12, not copied from ea
 ## Migrations
 
 In timestamp order. Each file is idempotent or additive. The **Live** column is what
-`list_migrations` returned on 2026-11-12: the last two files exist only in the repository and must
+`list_migrations` returned on 2026-11-12: the last three files exist only in the repository and must
 be applied by the owner (`supabase db push`, or the SQL editor), in this order.
 
 | File | Live | Contents |
@@ -25,11 +25,17 @@ be applied by the owner (`supabase db push`, or the SQL editor), in this order.
 | `20261112070000_mm_social_graph_authz.sql` | **no** | **S-2.** Policy helpers become caller-scoped wrappers over `mm_private`; service-role rate limiter for the Edge Functions; counter pruning |
 | `20261112120000_mm_write_path_hardening.sql` | **no** | **W-1 … W-19.** Least-privilege table and column grants, tightened write policies, device/session revocation, message insert guard, media quota, corrected RPCs. See `docs/AUDIT.md` A.6 |
 
+| `20261113090000_mm_privacy_quota_pins_timers_admin.sql` | **no** | **P-1 … P-3, Q-1, DM-1, G-1.** Who may see a profile, a device or a membership row; counter-based media quota; pinned messages; server-enforced message timers; group and channel administration RPCs. See `docs/AUDIT.md` A.7. Needs `pg_cron` (installed on the live project) for the purge job; without it the migration still applies and expired rows are hidden by RLS but not deleted. |
+
 Migration names in the live history use the same suffixes as the files, without the timestamp.
 
-## Tables (25 in `mm_*`)
+## Tables (25 live, 29 in the repository)
 
-All 25 have RLS enabled. Live list:
+All have RLS enabled. `20261112120000` adds `mm_revoked_sessions`; `20261113090000` adds
+`mm_media_usage` (per-user byte and object counters, maintained by triggers on `storage.objects`
+for bucket `mm-media` only, no client access), `mm_pinned_messages` (readable by members, written
+only through `mm_pin_message`) and `mm_conversation_bans` (readable by staff, written only through
+`mm_set_ban`). Live list:
 
 `mm_profiles`, `mm_devices`, `mm_device_prekeys`, `mm_contacts`, `mm_contact_requests`, `mm_blocks`,
 `mm_conversations`, `mm_conversation_members`, `mm_messages`, `mm_message_envelopes`,
@@ -157,6 +163,32 @@ Envelopes are the only channel that carries ciphertext; the other tables carry i
 small state. The client treats every event as a hint and re-reads from its stored cursor after a
 reconnect.
 
+### Added by `20261113090000`
+
+| Function | Who may call it | What it does |
+| --- | --- | --- |
+| `mm_my_memberships()` | signed-in user | The caller's own membership rows including `muted_until` and `notification_level`. Those two columns are no longer selectable on `mm_conversation_members` (every member could read every other member's notification settings), so this is how a client reads its own. The Android client only ever writes them, which still works. |
+| `mm_set_message_ttl(conversation, seconds)` | either party of a direct chat; owner/admin of a group or channel | Sets the timer (`0` = off, otherwise 5 s … 365 days). Applies to messages sent afterwards. `P0028 invalid_ttl`. |
+| `mm_pin_message(message, pinned)` | either party of a direct chat; owner/admin elsewhere | Pins or unpins; at most 50 per conversation (`P0029 too_many_pins`); deleted and expired messages cannot be pinned. |
+| `mm_update_conversation(conversation, title, description)` | owner/admin | Title 1 … 120 characters (`P0030 invalid_title`). |
+| `mm_set_member_role(conversation, user, role)` | owner only | `admin`, `member` or `subscriber`; the owner role moves only through `mm_transfer_ownership` (`P0031 invalid_role`). |
+| `mm_transfer_ownership(conversation, user)` | owner | The previous owner becomes an admin. |
+| `mm_rotate_invite(conversation)` | owner/admin | Replaces the invite code; the old one stops working. |
+| `mm_set_ban(conversation, user, banned)` | owner/admin (an admin cannot ban staff) | Removes the member and keeps them out (`P0032 member_banned` on join or add). Removal from a v2 group advances the sender-key epoch exactly like `mm_remove_group_member`. |
+| `mm_purge_expired_messages()` | `service_role` / pg_cron only | Deletes expired messages with their envelopes, receipts, reactions and pins. Scheduled every five minutes as job `mm_purge_expired_messages`. |
+| `mm_media_objects_of(user)` | `service_role` only | Every `mm-media` object a user owns, for account deletion. |
+
+`expires_at` on `mm_messages` is stamped by the server from the conversation's
+`message_ttl_seconds`; a client cannot supply or change it (no column privilege), and an edit expires
+with the message it edits. The SELECT policies on messages and envelopes exclude expired rows, so a
+message stops being readable at its expiry even if the purge job has not run yet.
+
+**What this does not do.** A timer deletes the server's copy and stops the server from handing the
+message out. It cannot delete what a recipient's device already stored: that needs the client to
+honour `expires_at`, and **the Android client in this repository does not do that yet** (see
+`docs/AUDIT.md` A.7, "Not done"). Until it does, do not describe this as disappearing messages to
+users.
+
 ## Edge Functions
 
 | Function | `verify_jwt` | Behaviour |
@@ -170,6 +202,18 @@ part of the repository and not a deploy-time flag. The in-body authorisation is 
 a valid JWT proves *who* the caller is, not *what* they may do. `mm-push-dispatch` is invoked with a
 project JWT (service role), which passes the gateway check, and still derives the actor from the
 user, never from the token.
+
+**Failure behaviour (since Phase 2).** `mm-push-dispatch` used to treat a failed lookup the same as
+an empty result: if the query for blocks, notification preferences, members or tokens failed, the
+function carried on as though nobody had blocked anybody and nobody had muted anything. Every lookup
+now fails the request (`500 lookup_failed`). Recipient lists are sent to PostgREST in slices of 150,
+because an `in.(…)` filter travels in the URL and a large channel exceeded its length limit - which
+again looked like "no recipients". A wake-up for a message that has already expired is refused with
+`410 wakeup_expired`. `mm-account-delete` now lists the account's media through
+`mm_media_objects_of()` and removes it from storage in batches of 100 **before** it deletes any
+database row; if listing or removal fails it stops with `500 media_lookup_failed` /
+`500 media_delete_failed` and the account is left intact, instead of deleting the rows and leaving
+orphaned ciphertext in the bucket.
 
 **Rate limiting history (S-4).** The first implementation of both limiter blocks wrote into
 `mm_rate_limits` with columns that do not exist (`user_id`, `bucket`, `count`) and ignored the
@@ -238,7 +282,19 @@ a wrong column name compiles, fails at run time and - if the code ignores `error
 and RPC argument from `supabase/functions/**/*.ts` and fails on anything the database does not
 have. It exists because that mistake shipped twice (S-4, E-1).
 
-All three suites were executed on 2026-11-12 against PostgreSQL 16 through the harness above:
+`supabase/tests/rls_privacy_quota_pins_timers_admin.sql` is the fourth suite (migration
+`20261113090000`). Visibility: a stranger who adds somebody to their own contact list, sends them a
+request, or joins the same public channel sees neither the profile nor the devices nor the
+membership row; mutual contacts, direct-chat partners, group co-members and channel staff still do;
+`last_seen_at` and other members' mute settings are not selectable by anybody. Quota: the counters
+follow insert, size change, owner change and delete, and the limit is enforced from the counters.
+Timers, pins and administration: every RPC with its permitted and refused callers, the limits, and
+the rule that a client can neither set nor extend `expires_at`. The suite was mutation-tested: eight
+deliberate weakenings of the migration (for example "a one-sided contact entry is enough", "channel
+subscribers see each other", "an admin may set roles") were applied one at a time and the suite
+failed on each.
+
+All four suites were executed on 2026-11-12 against PostgreSQL 16 through the harness above:
 migrations applied, suites passed, migrations re-applied cleanly. The S-2 suite was additionally run
 against a deliberately un-hardened database (migrations up to `20261112035022`) where it fails at
 "an outsider must not learn that alice and bob share a conversation" - evidence that the test

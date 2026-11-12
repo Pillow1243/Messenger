@@ -17,7 +17,7 @@
 --        membership row of every other subscriber.
 --   P-3  Membership rows exposed every member's private `muted_until` / `notification_level`.
 --   Q-1  The media quota scanned the whole `mm-media` bucket on every upload.
---   D-1  There was no server-enforced expiry for messages.
+--   DM-1 There was no server-enforced expiry for messages.
 --   G-1  Roles, titles, ownership, invites and bans could not be administered at all after the
 --        direct-write path was closed in 20261112120000.
 
@@ -383,7 +383,7 @@ end $c$;
 create index if not exists mm_messages_expires_idx
   on public.mm_messages (expires_at) where expires_at is not null;
 
--- D-1 The expiry is stamped by the server from the conversation's timer when the row is
+-- DM-1 The expiry is stamped by the server from the conversation's timer when the row is
 --     inserted, so a modified client can neither skip it nor extend it.
 create or replace function public.mm_guard_client_message() returns trigger
 language plpgsql security definer set search_path = public, pg_temp as $$
