@@ -156,7 +156,7 @@ unbounded; a profile owner could update any column of their profile row.
 
 * Backend: `supabase/tests/local/run.sh` — stub, eight migrations, three suites, the Edge Function
   schema contract, migrations re-applied (idempotency). Run locally on PostgreSQL 16.2 and by the `Backend` workflow on
-  `postgres:16`. The new suite has 101 assertions, 51 of them refusals; for the 37 that accept
+  `postgres:16`. The new suite has 106 assertions, 51 of them refusals; for the 37 that accept
   "any error or zero rows" the *reason* for each refusal was inspected once (permission, policy or
   the intended error), so that none passes because of a typo in the test.
 * Android: compiled, unit-tested and linted by the `CI` workflow on this branch; nothing Android

@@ -227,6 +227,27 @@ begin
     v_msg, v_bob)) = 'ok:1', 'the recipient deletes a consumed envelope';
   insert into public.mm_messages (conversation_id, sender_id, sender_device_id, client_msg_id, kind, meta, sent_at_ms)
   values (v_direct, v_bob, 'wp-device-bob', 'wp-bob-1', 'text', '{}', 1) returning id into v_bob_msg;
+  assert pg_temp.run(format(
+    $q$delete from public.mm_sender_key_distributions where recipient_user_id = %L and conversation_id = %L$q$,
+    v_bob, v_group)) = 'ok:1', 'the recipient deletes a consumed sender-key distribution';
+
+  -- A7b. The remaining direct deletes and the delete-for-everyone marker.
+  perform pg_temp.act_as(v_alice, s_alice);
+  select id into v_tmp from public.mm_messages where client_msg_id = 'wp-kind-voice' and conversation_id = v_direct;
+  assert pg_temp.run(format(
+    $q$update public.mm_messages set deleted_at = now() where id = %L and conversation_id = %L$q$,
+    v_tmp, v_direct)) = 'ok:1', 'the author can delete its message for everyone';
+  assert pg_temp.run(format(
+    $q$delete from public.mm_reactions where message_id = %L and user_id = %L and emoji = '👍'$q$,
+    v_msg, v_alice)) = 'ok:1', 'a reaction can be removed';
+  assert pg_temp.run(format($q$delete from public.mm_attachments where id = %L$q$, v_att)) = 'ok:1',
+    'the uploader can delete its attachment record';
+  assert pg_temp.run(format(
+    $q$insert into public.mm_blocks (blocker_id, blocked_id) values (%L, %L)
+       on conflict (blocker_id, blocked_id) do nothing returning *$q$, v_alice, v_carol)) = 'ok:1'
+     and pg_temp.run(format(
+    $q$delete from public.mm_blocks where blocker_id = %L and blocked_id = %L$q$, v_alice, v_carol)) = 'ok:1',
+    'block and unblock work';
 
   -- A8 (W-2). Calls: one unambiguous state function; the callee can answer and hang up.
   assert (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
