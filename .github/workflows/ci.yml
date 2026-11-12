@@ -63,6 +63,9 @@ jobs:
       - name: No committed credentials
         run: ./tools/check_no_secrets.sh
 
+      - name: Third-party licence inventory
+        run: python3 tools/license_inventory.py
+
       # Gradle's own log is only reachable through the artifact blob, which some CI
       # environments cannot fetch. Re-emitting the compiler/lint errors as workflow
       # annotations makes the failure readable directly from the check run.
@@ -115,6 +118,11 @@ jobs:
           else
             cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/offlinemesh-demo-signed.apk
           fi
+          # Dependency inventory + attribution notice travel with the binaries so a recipient can
+          # see exactly what is inside the APK and under which licences.
+          ./gradlew --no-daemon --console=plain :app:dependencies \
+            --configuration releaseRuntimeClasspath > artifacts/dependency-graph.txt || true
+          cp THIRD_PARTY_NOTICES.md artifacts/
           cd artifacts && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Upload test report

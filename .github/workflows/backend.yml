@@ -115,6 +115,19 @@ jobs:
         working-directory: supabase/functions
         run: deno lint || echo "::warning::deno lint reported findings"
 
+  licences:
+    name: Third-party licence inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+
+      # Fails when a dependency declared in app/build.gradle.kts has no entry in
+      # THIRD_PARTY_NOTICES.md, i.e. when the attribution that must ship with the APK drifts.
+      - name: Every declared dependency is accounted for
+        run: python3 tools/license_inventory.py
+
   secret-scan:
     name: Secret and credential scan
     runs-on: ubuntu-latest

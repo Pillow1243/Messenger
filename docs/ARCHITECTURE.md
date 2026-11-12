@@ -93,6 +93,32 @@ statements, and CI fails if an exported schema changes without being committed (
 * RTL: the app never hardcodes `start`/`end` insets by hand; Compose's layout direction handles
   Persian, and all strings exist in `values-fa`.
 * Every empty state explains what will appear there and why, including the offline case.
+* Chat list → chat → *Archived chats* (`ArchiveAndSavedScreens.kt`) and *Saved messages* are separate
+  destinations in `NavGraph`, so both have a real back stack rather than a dialog that swallows the
+  system back gesture. Forwarding reuses the same destination model: a `ForwardPickerDialog` lists
+  the chats already on the device and calls `ChatRepository.forwardMessage`, which re-encrypts for
+  the target chat like a freshly typed message.
+* Device-local state is deliberately separated from server state: archive flags, starred messages
+  and drafts live only in SQLCipher. They are private, they work offline, and they cannot fail
+  because a policy rejected a write.
+
+## Authorisation model (server side)
+
+RLS policies need membership answers inside their own expression, which requires `SECURITY DEFINER`
+helpers. Those helpers are the only place where the client-facing API and the policy layer touch, so
+they are layered explicitly:
+
+```
+API client ──RPC──▶ public.mm_is_member(conv, user)      (caller-scoped wrapper, EXECUTE: authenticated)
+                            │
+                            └──▶ mm_private.member_exists(conv, user)   (true implementation)
+                                 schema not in PostgREST `schemas`, EXECUTE: owner only
+```
+
+`supabase/config.toml` pins `schemas = ["public"]`, so `mm_private` has no REST route at all. The
+wrappers enforce that a caller may only learn about itself or about co-members of a conversation it
+belongs to; anything else returns `false`/`null`. Writes never rely on the wrappers for privilege:
+every mutating RPC re-checks `auth.uid()` and re-reads the graph inside its own transaction.
 
 ## Failure behaviour
 

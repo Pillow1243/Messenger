@@ -73,11 +73,34 @@ Writes that need cross-row checks go through these functions, which re-verify `a
 `mm_register_push_token`, `mm_revoke_push_token`, `mm_report`, `mm_upgrade_group_encryption`,
 `mm_search_users`, `mm_search_public_channels`, `mm_delete_me`, `mm_consume_rate_limit`.
 
-**Known gap (open):** the helper functions `mm_is_member(conversation, user)`,
-`mm_shares_conversation(a, b)` and `mm_is_blocked(a, b)` are `SECURITY DEFINER` and take arbitrary
-ids. Any signed-in user can call them for other people's ids, which reveals membership and blocking
-relationships. They are also used inside RLS policies, so tightening them must be done with a test
-suite in place. See [`AUDIT.md`](AUDIT.md) finding S-2.
+### Caller-scoped policy helpers (S-2, fixed)
+
+`mm_is_member`, `mm_role`, `mm_is_admin`, `mm_can_post`, `mm_shares_conversation`, `mm_is_blocked`
+and `mm_is_call_participant` remain callable (RLS policy expressions run as the caller, so they must
+be), but as of migration `20261112070000_mm_social_graph_authz.sql` they only answer questions that
+involve the caller:
+
+* their own membership/role/admin state,
+* a co-member of a conversation they belong to (needed by the device and SKDM fan-out policies),
+* a block where they are one of the two parties,
+* call participation where they are a participant.
+
+Anything else returns `false`/`null` rather than the truth, so the functions can no longer be used
+to enumerate other people's relationships. The implementations live in **`mm_private`**, a schema
+that is not in `supabase/config.toml`'s `schemas = ["public"]` list and on which no API role holds
+`USAGE` or `EXECUTE`; the public wrappers reach it because they are `SECURITY DEFINER`.
+
+### Rate limiting and internal helpers
+
+| Function | Callable by | Purpose |
+| --- | --- | --- |
+| `mm_consume_rate_limit(action, max, window)` | `authenticated`, `service_role` | per-`auth.uid()` limiter for client RPCs |
+| `mm_consume_rate_limit_as(subject, action, max, window)` | **`service_role` only** | limiter for Edge Functions, which run with the service key and have no `auth.uid()`; actions are allow-listed |
+| `mm_prune_rate_limits(older_than)` | **`service_role` only** | removes expired counter windows |
+
+`mm_private.member_exists`, `mm_private.member_role`, `mm_private.can_post`,
+`mm_private.shares_conversation`, `mm_private.is_blocked` and `mm_private.is_call_participant` are the
+unrestricted implementations. They are never exposed and no API role can execute them.
 
 ## Storage
 
@@ -103,14 +126,23 @@ reconnect.
 
 ## Edge Functions
 
-| Function | `verify_jwt` (live) | Behaviour |
+| Function | `verify_jwt` | Behaviour |
 | --- | --- | --- |
-| `mm-account-delete` | false | Validates the caller with `auth.getUser()`, then deletes the account with the service role. |
-| `mm-turn-credentials` | false | Validates the caller with `auth.getUser()`, then issues time-limited TURN credentials. |
-| `mm-push-dispatch` | false | Validates the caller with `auth.getUser()`; sends zero-plaintext FCM wakeups. |
+| `mm-account-delete` | **true** | Gateway checks the JWT; the body re-resolves the caller with `auth.getUser()`, consumes an `account_delete` rate-limit slot (3/hour), then deletes the account with the service role. |
+| `mm-turn-credentials` | **true** | Gateway checks the JWT; the body re-resolves the caller, consumes a `turn_creds` slot (30/5 min) and issues time-limited TURN credentials. |
+| `mm-push-dispatch` | **true** | Gateway checks the JWT; the body re-resolves the caller, consumes a `push_dispatch` slot (90/min), verifies the caller owns the message/call and is a member, then sends zero-plaintext FCM wakeups. |
 
-`verify_jwt` is off on the three functions while they perform their own check. Turning it on at the
-gateway would add a second layer and is listed as a low-severity hardening item in `AUDIT.md`.
+`verify_jwt` is declared in `supabase/config.toml` (`[functions.<name>] verify_jwt = true`), so it is
+part of the repository and not a deploy-time flag. The in-body authorisation is kept deliberately:
+a valid JWT proves *who* the caller is, not *what* they may do. `mm-push-dispatch` is invoked with a
+project JWT (service role), which passes the gateway check, and still derives the actor from the
+user, never from the token.
+
+**Rate limiting history (S-4).** The first implementation of both limiter blocks wrote into
+`mm_rate_limits` with columns that do not exist (`user_id`, `bucket`, `count`) and ignored the
+error, so neither function was throttled at all. The counter now goes through
+`mm_consume_rate_limit_as()` and a limiter failure fails the request closed
+(`supabase/functions/_shared/rate_limit.ts`).
 
 Secrets they read (names as in the source): `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 `SUPABASE_SERVICE_ROLE_KEY` (provided by the platform), `FCM_SERVICE_ACCOUNT_JSON`, `TURN_URLS`,
@@ -119,6 +151,22 @@ Secrets they read (names as in the source): `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 functions.
 
 ## Tests
+
+The suites run against a **disposable** database, never the shared production project:
+
+```bash
+# local, no Docker needed (pip install pgserver)
+python3 supabase/tests/local/embedded_pg.py
+
+# or against any empty PostgreSQL (CI uses a postgres:16 service container)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres ./supabase/tests/local/run.sh
+```
+
+`run.sh` applies `supabase/tests/local/00_supabase_stub.sql` (roles, `auth.uid()` from
+`request.jwt.claims`, `auth.users`, `storage.*`, the `supabase_realtime` publication, and the
+platform's default grant posture), then every migration in timestamp order, then every suite in
+`supabase/tests/`, then re-applies the migrations to prove idempotency. It runs in CI on every push
+(`.github/workflows/backend.yml`, job *Migrations + RLS suites*).
 
 `supabase/tests/rls_policies.sql` is a self-contained PL/pgSQL suite wrapped in `BEGIN … ROLLBACK`.
 It creates users, a direct conversation, messages and envelopes, then asserts:
@@ -132,10 +180,19 @@ It creates users, a direct conversation, messages and envelopes, then asserts:
 * the rate limiter rejects the third call in its window;
 * `mm_try_uuid('not-a-uuid')` returns null instead of raising.
 
-Run it with the Supabase SQL editor or `psql` against a non-production branch. An earlier document
-recorded a passing run; **that run was not repeated on 2026-11-12**. The hotfix assertions were
-checked with separate rolled-back probes against the live project, but the full suite was not
-re-run after they were added to the file, so it should be run on a branch before the next change.
+`supabase/tests/rls_social_graph.sql` is the second suite: fixtures for four users, negative tests
+for every enumeration path (two other users' shared conversation, group membership/roles/posting
+rights, block state, call participation), privilege assertions (`anon`/`authenticated` have no USAGE
+on `mm_private` and no EXECUTE on its functions, `service_role` alone can use the subject limiter),
+legitimate-access tests (a co-member still sees membership and the SKDM fan-out path still works),
+null-safety, and an RLS-policy-coverage audit that fails if an `mm_*` table has no policy and is not
+on the two-entry internal allow-list (`mm_rate_limits`, `mm_push_log`).
+
+Both suites were executed on 2026-11-12 against PostgreSQL 16 through the harness above: migrations
+applied, both suites passed, migrations re-applied cleanly. The S-2 suite was additionally run
+against a deliberately un-hardened database (migrations up to `20261112035022`) where it fails at
+"an outsider must not learn that alice and bob share a conversation" - evidence that the test
+actually detects the vulnerability rather than passing vacuously.
 
 ## Client configuration
 

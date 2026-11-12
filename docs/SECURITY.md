@@ -84,6 +84,18 @@ message metadata beyond what routing requires (`sender_id`, `conversation_id`, `
 * **Envelope access** is restricted to the recipient user; a sender cannot read the envelopes of
   other devices, and outsiders see zero rows (tested).
 * **Blocking** is enforced by the policies (a blocked sender cannot insert a message).
+* **The policy helpers are caller-scoped.** `mm_is_member` / `mm_role` / `mm_is_admin` /
+  `mm_can_post` / `mm_shares_conversation` / `mm_is_blocked` / `mm_is_call_participant` are
+  `SECURITY DEFINER` functions used inside RLS. They answer only about the caller or about a
+  co-member of a conversation the caller belongs to; any other question returns `false`/`null`.
+  Their implementations live in `mm_private`, which is outside the PostgREST exposed schema and on
+  which no API role holds `USAGE`/`EXECUTE`. This removes the social-graph enumeration primitive
+  described in `AUDIT.md` S-2 without weakening a single policy.
+* **Server-side rate limiting is real.** Client RPCs use `mm_consume_rate_limit` (keyed on
+  `auth.uid()`); the Edge Functions use `mm_consume_rate_limit_as`, which only `service_role` may
+  execute and which allow-lists its actions. A limiter that cannot be reached fails the request
+  closed instead of letting it through (the earlier Edge Function limiter wrote into non-existent
+  columns and silently did nothing).
 * **Deletion**: `mm_delete_me` removes the caller's data; deleting a message sets `deleted_at` and
   clients stop rendering it.
 
@@ -107,6 +119,10 @@ The mesh never consults Supabase, and losing the network never disables a radio.
 ## 6. Operational notes & external credentials
 
 * **Search is local**: the server cannot search ciphertext, and no plaintext index is uploaded.
+* **Local-only metadata.** Chat archive flags, starred ("saved") messages and the local message
+  search index never leave the device. Archive is deliberately device-local because the server's
+  `mm_conversations.archived_at` is owner-scoped and a plain member cannot write it; mirroring the
+  flag would have produced a silent server failure.
 * **1:1 WebRTC voice & video calling** uses `io.getstream:stream-webrtc-android` (DTLS-SRTP) with
   authenticated signaling over `mm_calls` / `mm_call_signals` and short-lived TURN credentials from
   `mm-turn-credentials`. Group calls are intentionally disabled at both UI and database RPC layers.
@@ -121,9 +137,15 @@ The mesh never consults Supabase, and losing the network never disables a radio.
 
 * **Fixed:** `anon` could execute every `mm_*` RPC, including the one-time pre-key claim, because
   PostgreSQL grants EXECUTE to `PUBLIC` by default. Migration `20261112035022` revokes that and adds
-  an authentication guard to the claim. Details and the open items (social-graph helpers, unverified
-  `verify_jwt` settings) are in [`AUDIT.md`](AUDIT.md), Part A.
-* **Not an independent audit.** This review was performed by the project's own engineering process.
+  an authentication guard to the claim.
+* **Fixed (this milestone):** the signed-in social-graph enumeration (S-2, migration
+  `20261112070000`, negative suite `supabase/tests/rls_social_graph.sql`), gateway JWT verification
+  on the three Edge Functions (S-3, `supabase/config.toml`) and the silently broken Edge Function
+  rate limiter (S-4, `_shared/rate_limit.ts` + `mm_consume_rate_limit_as`).
+* **Now enforced continuously:** both authorisation suites, migration idempotency, Deno type-check
+  of the functions, English/Persian string parity, licence inventory and a credential scan run in CI
+  on every push (`.github/workflows/ci.yml`, `backend.yml`). Details in [`AUDIT.md`](AUDIT.md), Part A.
+* **Not an independent audit of the cryptography.** This review was performed by the project's own engineering process.
   It is not a third-party cryptographic or security audit, and the project does not claim one.
 * **Group calls** are not implemented (the sentence above about them being disabled at both layers
   is accurate for the UI and the call RPCs; there is no SFU).
