@@ -1,0 +1,127 @@
+name: Backend
+
+# Verifies the parts of the product that do not need an Android device:
+#
+#   * every `supabase/migrations/*.sql` file applies to a clean PostgreSQL database,
+#   * both authorisation suites (RLS matrix + social-graph hardening) pass under real
+#     `anon` / `authenticated` / `service_role` role impersonation,
+#   * migrations are idempotent (they are also applied twice),
+#   * the Edge Functions type-check and lint under Deno,
+#   * no private key, service-role JWT or keystore material is committed.
+#
+# Nothing in this workflow talks to the shared production project: the database is a disposable
+# service container, so it cannot touch Luma or Messenger production data.
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  database-suites:
+    name: Migrations + RLS suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        # Disposable test database only; never the production project.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+
+      - name: Ensure the PostgreSQL client is available
+        run: |
+          set -e
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+          psql --version
+
+      - name: Apply stub, migrations and both suites
+        run: |
+          set -o pipefail
+          if ! ./supabase/tests/local/run.sh 2>&1 | tee backend.log; then
+            grep -E "ERROR|FAIL|assert" backend.log | head -25 | cut -c1-900 | while IFS= read -r line; do
+              echo "::error title=backend::$line"
+            done
+            exit 1
+          fi
+
+      - name: Upload backend log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: backend-suites-log
+          path: backend.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  edge-functions:
+    name: Edge Functions type-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
+        with:
+          deno-version: v2.x
+
+      - name: Type-check every function
+        working-directory: supabase/functions
+        run: |
+          set -e
+          for entry in */index.ts; do
+            echo "• $entry"
+            deno check "$entry"
+          done
+
+      # Formatting and lint findings are reported as annotations rather than blocking, so style
+      # never masks a type error. The type check above is the gate.
+      - name: Format check (advisory)
+        working-directory: supabase/functions
+        run: deno fmt --check || echo "::warning::deno fmt would reformat the functions"
+
+      - name: Lint (advisory)
+        working-directory: supabase/functions
+        run: deno lint || echo "::warning::deno lint reported findings"
+
+  secret-scan:
+    name: Secret and credential scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+
+      - name: Scan tracked files
+        run: ./tools/check_no_secrets.sh
