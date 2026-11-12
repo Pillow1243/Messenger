@@ -74,8 +74,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions refer
 
 ### Fixed
 
+* **Push notifications for messages never fired.** `mm-push-dispatch` selected a column that does
+  not exist (`mm_messages.created_at`), treated the failed query as "message not found" and
+  answered 403 to every message wake-up. Fixed, and guarded by a new CI check
+  (`tools/check_edge_function_schema.py`) that compares the tables, columns and RPC arguments
+  named in the Edge Functions with the migrated schema. Takes effect when the function is
+  redeployed.
 * Photos, videos, audio files and message edits were rejected by the backend: the `kind` check on
-  `mm_messages` only allowed `text`, `file`, `voice`, `system` and `call`. The constraint now lists
+  `mm_messages` only allowed `text`, `file`, `voice`, `system`, `call` and `poll`. The constraint now lists
   the kinds the app sends.
 * Retrying an interrupted send no longer fails on the second attempt: envelope, sender-key
   distribution and attachment records are written as idempotent inserts.

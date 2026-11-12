@@ -27,9 +27,11 @@
 
 -- W-1  mm_messages.kind rejected kinds the shipped client sends ('image', 'video', 'audio' for
 --      media and 'text-edit' for edits), so those uploads failed with a check violation.
+--      The list is a superset of the previous one ('poll' stays, although no client sends it and
+--      the insert guard below does not let a client write it), so no existing row can violate it.
 alter table public.mm_messages drop constraint if exists mm_messages_kind_check;
 alter table public.mm_messages add constraint mm_messages_kind_check
-  check (kind in ('text','file','voice','image','video','audio','text-edit','system','call'));
+  check (kind in ('text','file','voice','image','video','audio','text-edit','system','call','poll'));
 
 -- W-2  Two overloads mm_set_call_state(uuid,text) and mm_set_call_state(uuid,text,text default
 --      null) made a PostgREST call with only {p_call, p_state} ambiguous (PGRST203, HTTP 300):

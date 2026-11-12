@@ -117,6 +117,9 @@ runs against a stub of it. Any failure here is a blocker — note the exact erro
    afterwards, and the remaining members still read each other's messages.
 8. **Typing, reactions, read receipts** — type, react and read on both sides; the indicators behave
    as before the migration.
+9. **Message push** (needs the Firebase secrets and the redeployed `mm-push-dispatch`) — force-stop
+   the app on Phone B, send a text from Phone A: Phone B shows a notification without being opened.
+   Before the redeploy this never happened for messages, only for calls.
 
 ### Suite F — Hybrid Offline <-> Online Transitions (All 10 Scenarios)
 

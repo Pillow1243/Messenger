@@ -61,6 +61,14 @@ for suite in "$ROOT"/supabase/tests/*.sql; do
   fi
 done
 
+step "Edge Functions name only existing tables, columns and RPC arguments"
+if python3 "$ROOT/tools/check_edge_function_schema.py" --database-url "$DATABASE_URL" --psql "$PSQL"; then
+  printf '\033[32mPASS\033[0m edge function schema contract\n'
+else
+  printf '\033[31mFAIL\033[0m edge function schema contract\n'
+  status=1
+fi
+
 step "Migration idempotency (stub + migrations re-applied onto the same database)"
 for file in "${migrations[@]}"; do
   psql_run -f "$file" || fail "migration $(basename "$file") is not idempotent"

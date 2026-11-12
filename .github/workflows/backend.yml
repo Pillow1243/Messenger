@@ -6,6 +6,7 @@ name: Backend
 #   * every authorisation suite in `supabase/tests/*.sql` (RLS matrix, social-graph hardening,
 #     write-path hardening) passes under real
 #     `anon` / `authenticated` / `service_role` role impersonation,
+#   * the Edge Functions only name tables, columns and RPC arguments that exist in that schema,
 #   * migrations are idempotent (they are also applied twice),
 #   * the Edge Functions type-check and lint under Deno,
 #   * no private key, service-role JWT or keystore material is committed.

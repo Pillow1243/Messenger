@@ -114,7 +114,8 @@ supabase link --project-ref lnhmbjqjfrnqkpsjpszb
 supabase db push          # shows the pending files first; confirm that only these two are listed
 
 # Redeploy the three functions; supabase/config.toml sets verify_jwt = true for each,
-# so the gateway flag changes with the deployment, not by hand.
+# so the gateway flag changes with the deployment, not by hand. The deployed mm-push-dispatch
+# refuses every message wake-up (AUDIT.md E-1); message push only works after this step.
 supabase functions deploy mm-account-delete
 supabase functions deploy mm-turn-credentials
 supabase functions deploy mm-push-dispatch

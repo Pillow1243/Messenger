@@ -231,6 +231,13 @@ people's messages; mis-addressed envelopes; forged receipts; revoked-session acc
 checks on the media bucket; and privilege invariants (no `anon` privilege, no direct write on an
 RPC-only table, every `SECURITY DEFINER` function pins its `search_path`).
 
+After the suites, `run.sh` runs `tools/check_edge_function_schema.py` against the same database. The
+Edge Functions address the schema through string literals (`.from("mm_messages").select("…")`), so
+a wrong column name compiles, fails at run time and - if the code ignores `error` - looks like
+"row not found". The script extracts every table, column, filter column, inline insert/update key
+and RPC argument from `supabase/functions/**/*.ts` and fails on anything the database does not
+have. It exists because that mistake shipped twice (S-4, E-1).
+
 All three suites were executed on 2026-11-12 against PostgreSQL 16 through the harness above:
 migrations applied, suites passed, migrations re-applied cleanly. The S-2 suite was additionally run
 against a deliberately un-hardened database (migrations up to `20261112035022`) where it fails at

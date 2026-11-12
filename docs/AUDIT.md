@@ -32,6 +32,7 @@ branch, not locally (see A.5).
 | L-1 | Medium | **Analysed, owner decision open** | `libsignal-android` is AGPL-3.0 and is linked into the APK. `THIRD_PARTY_NOTICES.md` now contains the full inventory, the obligations, and the decisions the owner must take. No licence was chosen on the owner's behalf. |
 | L-2 | Medium | **Fixed** (earlier pass) | The in-app licences screen exists (`presentation/screens/LicencesScreen.kt`, asset built by `tools/build_licence_asset.py`). An earlier revision of this table still listed it as missing. |
 | W-1 … W-19 | **High** (several) | **Fixed in the repository, not yet applied to the live project** | Third pass: the write path. A signed-in client could skip the RPCs and write rows directly. See [A.6](#a6-third-pass-2026-11-12-the-write-path). |
+| E-1 | **High, functional** | **Fixed in the repository, not yet redeployed** | `mm-push-dispatch` refused every message wake-up because it selected a column that does not exist. See A.6. |
 | F-1 | — | Not implemented | Group calls (need an SFU), stories, polls, scheduled/silent messages, bots and Mini Apps, search filters, pinned messages, disappearing messages, chat folders. Listed honestly in `docs/ROADMAP.md`. |
 
 ### A.2 Verified as correct (no change needed)
@@ -84,8 +85,8 @@ branch, not locally (see A.5).
 * The sandbox has **no JDK, no Android SDK, no Docker and no route to Maven/Google/`supabase.co`**.
   Anything Android is therefore verified by GitHub Actions on this branch, and anything about the
   live project is verified against a local PostgreSQL reproduction. The second pass ran no query
-  against the live project; the third pass (A.6) read its migration history, one catalog query and
-  the Edge Function list through the Supabase connector, and wrote nothing.
+  against the live project; the third pass (A.6) read its migration history, two catalog queries,
+  the Edge Function list and one function body through the Supabase connector, and wrote nothing.
 * The new migration has **not been pushed to the live project**. It is additive and data-preserving,
   and it must be applied with `supabase db push` (or the SQL editor) by the owner — see
   `docs/SUPABASE.md`.
@@ -145,10 +146,16 @@ unbounded; a profile owner could update any column of their profile row.
 | C-3 | Hang-up was signalled with kind `hangup`, which `mm_call_signals_kind_check` rejects; the peer only learned about the end of the call from the call-state row. | Sent as `bye` (the kind the backend also accepts for already-ended calls); `hangup` is still understood on receipt. |
 | C-4 | An incoming `text-edit` was applied to whichever local message its `target` named, without checking that the editor wrote it. | `EditPolicy`: same device, or another device known to belong to the same account; never an outgoing, deleted or non-text message; same conversation. Unit-tested. |
 
+**Defect in an Edge Function**
+
+| ID | Severity | Finding | Fix |
+| --- | --- | --- | --- |
+| E-1 | **High, functional** | `mm-push-dispatch` looked the message up with `select("id, sender_id, created_at, deleted_at")`. `mm_messages` has no `created_at` column (it is `sent_at`), so the query failed, the code read the failure as "no such message" and answered **403 `message_not_owned_by_caller` to every message wake-up**. Push for calls was unaffected (different table). This is the same class of bug as S-4: a string-typed column name, an ignored `error`. Confirmed against the live project: the deployed function (version 1) contains the same select and the live table has no such column. | Column corrected; every lookup now distinguishes a failed query (500 `lookup_failed`) from a missing row; a repeated dispatch for one message no longer inserts duplicate notification rows. New CI gate `tools/check_edge_function_schema.py` compares every table, column and RPC argument named in the functions with the migrated database — it fails on the old source at exactly this line. |
+
 **Verification**
 
-* Backend: `supabase/tests/local/run.sh` — stub, eight migrations, three suites, migrations
-  re-applied (idempotency). Run locally on PostgreSQL 16.2 and by the `Backend` workflow on
+* Backend: `supabase/tests/local/run.sh` — stub, eight migrations, three suites, the Edge Function
+  schema contract, migrations re-applied (idempotency). Run locally on PostgreSQL 16.2 and by the `Backend` workflow on
   `postgres:16`. The new suite has 101 assertions, 51 of them refusals; for the 37 that accept
   "any error or zero rows" the *reason* for each refusal was inspected once (permission, policy or
   the intended error), so that none passes because of a typo in the test.
@@ -161,13 +168,17 @@ unbounded; a profile owner could update any column of their profile row.
 
 **Deployment (owner action — nothing was applied to the live project)**
 
-The live project `lnhmbjqjfrnqkpsjpszb` was only *read* in this pass (`list_migrations`, one catalog
-query, `list_edge_functions`). It has six migrations applied, through `20261112035022`. Still to
+The live project `lnhmbjqjfrnqkpsjpszb` was only *read* in this pass (`list_migrations`, two catalog
+queries, `list_edge_functions`, `get_edge_function` for `mm-push-dispatch`). It has six migrations applied, through `20261112035022`. Still to
 apply, in order: `20261112070000_mm_social_graph_authz.sql`, then
 `20261112120000_mm_write_path_hardening.sql`; then redeploy the three `mm-*` Edge Functions (they
 are at version 1 with `verify_jwt = false`). Both migrations are idempotent, touch only `mm_*`
 objects and the two `mm-*` bucket policies, and delete no data. The core tables were empty when
-checked. Either order of client and database rollout is safe: an old client against the new
+checked. The same read confirmed, on the live database, the state this pass describes: the `kind`
+constraint without `image`/`video`/`audio`/`text-edit`, two `mm_set_call_state` overloads,
+`authenticated` able to INSERT into `mm_conversation_members`, and **zero rows in `mm_profiles`
+and `mm_messages`** — nobody has an account yet, so the rollout cannot disturb existing users.
+Either order of client and database rollout is safe: an old client against the new
 database fails in the same places it already failed (C-1, C-2), and the new client against the old
 database is no worse than the old one.
 
