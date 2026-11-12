@@ -286,6 +286,21 @@ jobs:
           "$ADB" -s emulator-5554 shell settings put global animator_duration_scale 0
           echo "emulator booted: API $("$ADB" -s emulator-5554 shell getprop ro.build.version.sdk | tr -d '\r')"
 
+      # Annotations emitted by a step that aborts are not always retained, so the emulator log is
+      # re-emitted from a separate, successful step. This is what makes a boot failure debuggable
+      # from the checks API rather than only from the raw job log.
+      - name: Emulator boot diagnostics
+        if: failure()
+        run: |
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          echo "::error title=Emulator::emulator binary: $(ls -l "$ANDROID_HOME/emulator/emulator" 2>&1)"
+          echo "::error title=Emulator::adb: $("$ADB" version 2>&1 | head -2 | tr '\n' ' ')"
+          echo "::error title=Emulator::devices: $("$ADB" devices 2>&1 | tr '\n' ' ')"
+          echo "::error title=Emulator::avd home: $(ls "$HOME/.android/avd" 2>&1 | tr '\n' ' ')"
+          tail -15 /tmp/emulator.log 2>&1 |
+            while IFS= read -r line; do echo "::error title=Emulator log::${line}"; done
+          exit 1
+
       - name: Run instrumentation tests
         run: |
           set -o pipefail
