@@ -71,4 +71,14 @@ class PushWakeupPolicy(
             dedupKey = dedupKey
         )
     }
+
+    /**
+     * Forgets a wakeup that was accepted but could not be acted on (no session yet, no network at
+     * that moment). Without this the server's next push for the same message would be discarded
+     * as a duplicate for [dedupWindowMs], although nothing had been fetched.
+     */
+    @Synchronized
+    fun forget(dedupKey: String) {
+        seen.remove(dedupKey)
+    }
 }

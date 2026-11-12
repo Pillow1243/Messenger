@@ -195,7 +195,16 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
             _busy.value = true
             runCatching {
                 val created = app.chats.sendAttachmentsFromUris(conversationId, uris, caption)
-                if (created.isEmpty()) _error.value = "attachment_pick_failed"
+                if (created.isEmpty()) {
+                    _error.value = "attachment_pick_failed"
+                } else if (created.size < uris.size) {
+                    // Some went out, some did not: say which problem stopped the rest.
+                    _error.value = when (app.chats.lastAttachmentProblem()) {
+                        "file_too_large", "file_too_large_for_mesh" -> "file_too_large"
+                        "insufficient_storage" -> "insufficient_storage"
+                        else -> "attachment_pick_failed"
+                    }
+                }
             }.onFailure { err ->
                 _error.value = when (err.message) {
                     "file_too_large", "file_too_large_for_mesh" -> "file_too_large"
@@ -275,8 +284,10 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
 
     fun markRead(conversationId: String) = viewModelScope.launch { app.chats.markRead(conversationId) }
 
-    fun deleteConversation(conversationId: String) = viewModelScope.launch {
-        app.chats.deleteConversation(conversationId)
+    /** [onDeleted] runs only when the chat is really gone, so the screen stays open on failure. */
+    fun deleteConversation(conversationId: String, onDeleted: () -> Unit = {}) = viewModelScope.launch {
+        val deleted = runCatching { app.chats.deleteConversation(conversationId) }.getOrDefault(false)
+        if (deleted) onDeleted() else _error.value = "leave_failed"
     }
 
     fun toggleConversationMute(conversationId: String) = viewModelScope.launch {
@@ -569,7 +580,9 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
     /** On-device search over decrypted data plus server search over public accounts/channels. */
     fun search(query: String) = viewModelScope.launch {
         _searching.value = true
-        _localResults.value = app.chats.search(query)
+        runCatching { app.chats.search(query) }
+            .onSuccess { _localResults.value = it }
+            .onFailure { android.util.Log.w("AppViewModel", "Local search failed", it) }
         if (query.trim().length >= 2 && app.online.isSignedIn) {
             runCatching { app.chats.searchAccounts(query.trim()) }
                 .onSuccess { _accountResults.value = it }
@@ -619,16 +632,16 @@ class AppViewModel(private val app: MessengerApp) : ViewModel() {
     }
 
     fun toggleReaction(messageId: String, emoji: String) = viewModelScope.launch {
-        runCatching { app.chats.toggleReaction(messageId, emoji) }
-            .onFailure { _error.value = "error_unknown" }
+        val changed = runCatching { app.chats.toggleReaction(messageId, emoji) }.getOrDefault(false)
+        if (!changed) _error.value = "reaction_unavailable"
     }
 
     fun editMessage(messageId: String, body: String) = viewModelScope.launch {
-        if (!app.chats.editMessage(messageId, body)) _error.value = "error_unknown"
+        if (!app.chats.editMessage(messageId, body)) _error.value = "edit_failed"
     }
 
     fun deleteForEveryone(messageId: String) = viewModelScope.launch {
-        if (!app.chats.deleteForEveryone(messageId)) _error.value = "error_unknown"
+        if (!app.chats.deleteForEveryone(messageId)) _error.value = "delete_failed"
     }
 
     fun setStarred(messageId: String, starred: Boolean) = viewModelScope.launch {

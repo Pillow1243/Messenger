@@ -1201,13 +1201,16 @@ class OnlineApi(
         )
     }
 
-    suspend fun deleteMessageForEveryone(messageId: String, conversationId: String) {
-        rest.patch(
+    /**
+     * Returns false when the server left the row untouched. The update policy only covers the
+     * author's messages of the last 24 hours; outside of it the request "succeeds" on zero rows.
+     */
+    suspend fun deleteMessageForEveryone(messageId: String, conversationId: String): Boolean =
+        rest.patchCounting(
             "mm_messages",
             listOf("id" to "eq.$messageId", "conversation_id" to "eq.$conversationId"),
             buildJsonObject { put("deleted_at", Instant.now().toString()) }
-        )
-    }
+        ) > 0
 
     // --------------------------------------------------------------------- mapping
 

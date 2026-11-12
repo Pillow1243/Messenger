@@ -5,6 +5,101 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions refer
 
 ## [Unreleased] — security hardening and chat hygiene
 
+### Compatibility
+
+* **Mesh protocol 2 is not compatible with protocol 1.** Devices running an older build and devices
+  running this one do not exchange offline messages; both sides must update. Online messaging is
+  unaffected. Packets that an older build left in its store-and-forward queue are discarded.
+
+### Security — offline mesh (protocol 2)
+
+* **Receipts can no longer be forged (M-1).** A delivery receipt was a plain header naming a
+  message id, accepted from any device in radio range. One forged frame marked a message
+  "delivered" and made the sender delete the ciphertext it was holding for the real recipient. A
+  receipt is now an encrypted packet: it has to decrypt under the Signal session of the device it
+  claims to come from, name a packet that was queued for exactly that device, and come from a
+  participant of the conversation.
+* **A relay can no longer change what a message means (M-2).** The group id, group name, message
+  id, timestamp and attachment metadata travelled in the clear header and were trusted. A relaying
+  device could move a message into another chat, rename a group, rewrite the time or redirect a
+  receipt. All of it is now inside the ciphertext (`SealedPayload`); the clear header only routes.
+* **A contact can no longer write into another chat (M-2).** A direct chat's id is the peer's
+  device id, and a "group" packet naming that id was stored in the direct chat. Group packets are
+  now accepted only for a stored mesh group, only from one of its members, and a new group must
+  list both the sender and the recipient.
+* **File receive is bounded (M-3).** The transfer id was used as a directory name without
+  validation (`../..` left the staging directory), chunk index, count and size were not checked,
+  and the declared size was not limited. All are validated; a transfer belongs to the conversation
+  and message it started in; unfinished plaintext staging is purged.
+* **A different identity key no longer takes over a device's route (M-6).** A HELLO claiming a
+  known device id with another identity key is refused before the link is registered.
+* **`FileProvider` exposes `cache/share/` only (FP-1).** It used to cover the whole cache
+  directory, which also holds decrypted temporaries.
+* **Only this app's own notification can answer a call (I-1).** The launcher activity is exported;
+  any app could start it with the extras that answer a ringing call. The answer action now needs a
+  per-installation token; ids from intents and `offlinemesh://` links are validated.
+
+### Fixed — offline mesh
+
+* Packets stay queued until the recipient confirms them and are repeated on the open link; a
+  repeated packet gets its receipt again. Previously a frame written to a link that dropped a
+  moment later was gone, and the message stayed at "sent" forever.
+* Receipts are relayed, so a message that needed a relay can reach "delivered".
+* The store-and-forward queue holds 2,000 packets (was 600: a file above ~19 MB could not be
+  queued and the rest of it was dropped silently). A file that does not fit now fails visibly and
+  can be retried. The retry pass no longer starves behind 200 packets for an absent device.
+* A retry no longer re-encrypts a text that is still queued (each pass advanced the ratchet).
+* Members of a group learn the member list with the first message and can reply to everybody;
+  before, only the creator could write.
+* Retrying a failed mesh-only attachment re-sends it over the mesh instead of scheduling an upload
+  that cannot happen.
+
+### Fixed — search and forwarding
+
+* **Local search works again (R-3).** The contact query declared a two-character `ESCAPE`, which
+  SQLite rejects when it compares the first row: every search failed for a user with at least one
+  contact. `%` and `_` in a search are now matched literally in chats, messages and contacts.
+* **Forwarding an attachment forwards the attachment (R-2).** It used to send the phone's locally
+  encrypted copy, which the recipient cannot open, and removed the attachment from the message
+  that was forwarded.
+
+### Build
+
+* The CI and release workflows pass the four Firebase client options (`FIREBASE_APP_ID`,
+  `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_SENDER_ID`) from repository secrets to
+  Gradle. They never did, so no published APK could receive a push. The secrets are not set yet.
+
+### Fixed — online
+
+* **Edit and delete-for-everyone no longer pretend.** Both changed the local copy first and
+  ignored the server's answer. A delete older than 24 hours is filtered out by row-level security
+  without an error, so the message vanished on the sender's phone and stayed on everybody else's.
+  The server is now asked first, zero changed rows count as failure, and the user is told.
+* Reactions: tapping an emoji somebody else had already used removed nothing instead of adding
+  yours (the app compared against the per-emoji count, with a prefix match). The app now asks the
+  server whether *this account* reacted.
+* Deleting an online group or channel requires the leave to succeed; otherwise the chat reappeared
+  after the next sync. Attachments, queued packets and outbox rows are removed with the chat.
+* A batch of attachments no longer stops at the first unusable file after part of it was sent.
+* A push wake-up that could not be handled (no session yet, no network) is accepted again when the
+  server repeats it, instead of being discarded as a duplicate for ten minutes.
+* `OutboxWorker` retries while the outbox is not empty; it used to report success regardless.
+  `SyncWorker` runs every step and reports a failed one.
+
+### Backend (migration `20261113090000`, **not yet applied to the live project**)
+
+* **Profile, device and membership visibility (P-1 … P-3).** Adding somebody to your own contact
+  list, sending them a contact request or joining the same public channel no longer reveals their
+  profile, their device list or their membership rows. `last_seen_at` and other members'
+  notification settings are not selectable at all.
+* **Media quota from counters (Q-1)**, 5 GiB and 20,000 objects per account, instead of a scan of
+  the whole bucket on every upload.
+* **Server-side message timers (DM-1)**, **pinned messages**, and **group/channel administration**
+  (title, roles, ownership transfer, invite rotation, bans). These are backend capabilities; the
+  Android client does not use them yet.
+* Edge Functions fail closed on failed lookups; account deletion removes the account's media from
+  storage before it deletes rows. Details in `docs/SUPABASE.md`.
+
 ### Security
 
 * **W-1 … W-19 — the direct-write path around the RPCs is closed** (migration

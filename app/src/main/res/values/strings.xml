@@ -289,4 +289,10 @@
     <string name="licences_title">Open-source licences</string>
     <string name="licences_settings_subtitle">Third-party notices shipped in this build</string>
     <string name="licences_loading">Loading notices…</string>
+    <string name="edit_failed">The edit was not sent. The message is unchanged.</string>
+    <string name="delete_failed">Could not delete for everyone. The message is still there.</string>
+    <string name="reaction_unavailable">Reactions need an online chat and a connection.</string>
+    <string name="forward_unavailable">This message cannot be forwarded from this device.</string>
+    <string name="mesh_queue_full">Too large to queue while the recipient is out of range. Try again when they are nearby.</string>
+    <string name="leave_failed">Could not leave the chat, so it was not deleted. Check your connection and try again.</string>
 </resources>

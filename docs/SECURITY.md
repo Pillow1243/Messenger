@@ -132,6 +132,52 @@ are observable at send time; the decision is pure and unit-tested. Rules:
 
 The mesh never consults Supabase, and losing the network never disables a radio.
 
+### 5.1 Offline mesh, protocol 2
+
+A mesh frame is a clear routing header followed by a Signal ciphertext. Any device in radio range
+can read the header, relay the frame, drop it, replay it or change the header. The protocol
+therefore treats the header as a hint for routing and nothing else:
+
+* **What the receiver acts on is inside the ciphertext.** `SealedPayload` puts the packet type,
+  the recipient, the packet id, the message id, the sender's timestamp, the group id, name and
+  member list, the attachment metadata and (for receipts) the acknowledged ids in front of the
+  content before encryption. After decryption the receiver compares type, recipient and packet id
+  with the clear header and drops the packet on any difference; every other value is taken from
+  the sealed copy. `from` is trusted because the session that decrypted the packet belongs to that
+  device.
+* **Receipts are packets.** A receipt is encrypted for the sender of the message. It is honoured
+  only if it decrypts, names a packet that is queued for the device that sent the receipt, and -
+  to mark a message delivered - comes from a member of that message's conversation.
+* **Groups.** A packet may name a group only if the sealed member list contains both the sender
+  and the recipient. For a group that already exists the sender must be one of the stored members,
+  and the id must belong to a mesh group - not to a direct chat (whose id is the peer's device id)
+  and not to an online conversation. Mesh groups have no administrator and no signed membership:
+  **a member can add members by listing them**, and a member who is removed by the others keeps
+  whatever it already received. That is a property of this design, not an oversight.
+* **Timestamps** from the sender are accepted within the store-and-forward window (24 hours back,
+  5 minutes ahead); anything else is replaced by the time of receipt.
+* **Files.** The transfer id must be the message id and must be a plain identifier; index, count,
+  chunk size and declared size must describe one consistent transfer of at most 50 MiB; the file
+  name is reduced to its last path segment. Chunks are written only below `cache/staging/<id>/`,
+  and a transfer accepts chunks only from the conversation it started in.
+* **Limits.** Expiry is at most 24 hours (plus 10 minutes of clock tolerance) from now and the hop
+  budget is at most 12; frames outside those limits are not processed or relayed. Other people's
+  packets may use 400 of the 2,000 queue slots.
+
+What the mesh does **not** protect:
+
+* **Metadata.** The clear header shows who sends to whom, when, and roughly how much. Neighbours
+  and relays see it.
+* **Availability.** A relay can drop frames, and a device in range can flood. Packets are repeated
+  until confirmed, and the queue is bounded, but there is no defence against jamming.
+* **First contact.** A HELLO is not signed. The first device to present a device id is believed
+  (trust on first use); a later HELLO with a different identity key for that id is refused, and
+  the safety number is the way to detect a first-contact impostor. An attacker who replays a known
+  device's genuine HELLO can occupy its route until the real device connects; it cannot read or
+  forge messages, and unconfirmed packets stay queued for the real device.
+* **Disk space.** A contact can start transfers of up to 50 MiB each; unfinished ones are removed
+  after 25 hours. There is no per-contact quota.
+
 ## 6. Operational notes & external credentials
 
 * **Search is local**: the server cannot search ciphertext, and no plaintext index is uploaded.

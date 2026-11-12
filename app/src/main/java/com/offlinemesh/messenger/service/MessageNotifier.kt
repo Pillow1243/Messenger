@@ -33,6 +33,31 @@ object MessageNotifier {
     const val CALL_ACTION_ANSWER = "answer"
     const val CALL_ACTION_OPEN = "open"
 
+    /** Proves that an intent comes from one of this app's own notifications. */
+    const val EXTRA_LAUNCH_TOKEN = "launch_token"
+
+    private const val LAUNCH_PREFS = "launch_guard"
+    private const val LAUNCH_TOKEN_KEY = "token"
+    @Volatile private var cachedLaunchToken: String? = null
+
+    /**
+     * A random value private to this installation. It is put into the "answer" notification
+     * action and checked by MainActivity, so that no other app can make this one pick up a call.
+     */
+    fun launchToken(context: Context): String {
+        cachedLaunchToken?.let { return it }
+        synchronized(this) {
+            cachedLaunchToken?.let { return it }
+            val prefs = context.applicationContext.getSharedPreferences(LAUNCH_PREFS, Context.MODE_PRIVATE)
+            val stored = prefs.getString(LAUNCH_TOKEN_KEY, null)?.takeIf { it.length >= 32 }
+            val token = stored ?: ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+                .joinToString("") { "%02x".format(it) }
+                .also { prefs.edit().putString(LAUNCH_TOKEN_KEY, it).apply() }
+            cachedLaunchToken = token
+            return token
+        }
+    }
+
     private const val CHANNEL_DIRECT = "messages_direct_v2"
     private const val CHANNEL_GROUP = "messages_group_v2"
     private const val CHANNEL_CHANNEL = "messages_channel_v2"
@@ -196,6 +221,7 @@ object MessageNotifier {
             putExtra(EXTRA_CALL_ID, callId)
             putExtra(EXTRA_CONVERSATION, conversationId)
             putExtra(EXTRA_CALL_ACTION, CALL_ACTION_ANSWER)
+            putExtra(EXTRA_LAUNCH_TOKEN, launchToken(context))
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val answerPending = PendingIntent.getActivity(

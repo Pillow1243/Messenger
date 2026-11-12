@@ -36,7 +36,14 @@ data class AppSettings(
     val radiosUsable: Boolean get() = bluetoothEnabled || wifiEnabled
 }
 
-class SettingsRepository(private val context: Context) {
+class SettingsRepository(
+    private val context: Context,
+    /**
+     * Fixed device id instead of the stored one. Only for tests that run the message layer of
+     * several devices inside one process, where they would otherwise share a single id.
+     */
+    private val deviceIdOverride: String? = null
+) {
 
     private object Keys {
         val DEVICE_ID = stringPreferencesKey("device_id")
@@ -80,6 +87,7 @@ class SettingsRepository(private val context: Context) {
 
     /** Device id is generated once and persists for the lifetime of the installation. */
     suspend fun deviceId(): String {
+        deviceIdOverride?.let { return it }
         val existing = context.dataStore.data.map { it[Keys.DEVICE_ID] }.first()
         if (!existing.isNullOrBlank()) return existing
         val generated = UUID.randomUUID().toString()

@@ -57,27 +57,52 @@ Deno.serve(async (req) => {
     return json(503, { error: "rate_limiter_unavailable" });
   }
 
-  // 1. Delete encrypted media blobs uploaded by this user in mm-media.
-  const { data: attachments } = await admin
-    .from("mm_attachments")
-    .select("id, bucket, object_path")
-    .eq("uploader_id", uid);
-  if (attachments && attachments.length > 0) {
-    const mediaPaths = attachments
-      .filter((a) => a.bucket === "mm-media" && a.object_path)
-      .map((a) => a.object_path as string);
-    if (mediaPaths.length > 0) {
-      await admin.storage.from("mm-media").remove(mediaPaths);
+  // 1. Delete the encrypted media blobs this user uploaded to mm-media.
+  //
+  // The list comes from storage itself (objects owned by the account), not from mm_attachments:
+  // an attachment row can be deleted by its uploader while the blob stays behind, and such a
+  // blob would otherwise outlive the account with nobody left who is allowed to remove it.
+  // Nothing is deleted from the database until storage has been emptied: if any step fails the
+  // request is refused and can simply be repeated.
+  const { data: owned, error: ownedErr } = await admin.rpc("mm_media_objects_of", { p_user: uid });
+  if (ownedErr) {
+    console.error("mm-account-delete: media listing failed", ownedErr.code ?? "unknown");
+    return json(500, { error: "media_lookup_failed" });
+  }
+  const mediaPaths = ((owned ?? []) as { object_path: string }[])
+    .map((o) => o.object_path)
+    .filter((path) => typeof path === "string" && path.length > 0);
+  for (let i = 0; i < mediaPaths.length; i += 100) {
+    const { error: removeErr } = await admin.storage
+      .from("mm-media")
+      .remove(mediaPaths.slice(i, i + 100));
+    if (removeErr) {
+      console.error("mm-account-delete: media removal failed", removeErr.name ?? "unknown");
+      return json(500, { error: "media_delete_failed" });
     }
-    await admin.from("mm_attachments").delete().eq("uploader_id", uid);
+  }
+  const { error: attachmentsErr } = await admin.from("mm_attachments").delete().eq("uploader_id", uid);
+  if (attachmentsErr) {
+    console.error("mm-account-delete: attachment rows not removed", attachmentsErr.code ?? "unknown");
+    return json(500, { error: "media_delete_failed" });
   }
 
   // 2. Delete user avatars in mm-avatars/<uid>/.
-  const { data: avatarFiles } = await admin.storage.from("mm-avatars").list(uid, { limit: 100 });
+  const { data: avatarFiles, error: avatarListErr } = await admin.storage
+    .from("mm-avatars")
+    .list(uid, { limit: 1000 });
+  if (avatarListErr) {
+    console.error("mm-account-delete: avatar listing failed", avatarListErr.name ?? "unknown");
+    return json(500, { error: "media_lookup_failed" });
+  }
   if (avatarFiles && avatarFiles.length > 0) {
-    await admin.storage
+    const { error: avatarErr } = await admin.storage
       .from("mm-avatars")
       .remove(avatarFiles.map((f) => `${uid}/${f.name}`));
+    if (avatarErr) {
+      console.error("mm-account-delete: avatar removal failed", avatarErr.name ?? "unknown");
+      return json(500, { error: "media_delete_failed" });
+    }
   }
 
   // 3. Run database-level key rotation, revocation & anonymization RPC as the user.

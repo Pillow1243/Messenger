@@ -84,7 +84,11 @@ interface ConversationDao {
         myRole: String = "member"
     )
 
-    @Query("SELECT * FROM conversations WHERE title LIKE :pattern OR lastMessagePreview LIKE :pattern ORDER BY lastMessageAt DESC")
+    /** [pattern] comes from `LikePattern.contains`; the escape character must stay one character. */
+    @Query(
+        "SELECT * FROM conversations WHERE title LIKE :pattern ESCAPE '\\' " +
+            "OR lastMessagePreview LIKE :pattern ESCAPE '\\' ORDER BY lastMessageAt DESC LIMIT 200"
+    )
     suspend fun search(pattern: String): List<ConversationEntity>
 }
 
@@ -110,6 +114,13 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE outgoing = 1 AND status IN ('QUEUED','SENDING','SENT') ORDER BY timestamp ASC")
     suspend fun pendingOutgoing(): List<MessageEntity>
+
+    /** Sealed attachment files of one conversation, to remove them together with the chat. */
+    @Query("SELECT filePath FROM messages WHERE conversationId = :conversationId AND filePath IS NOT NULL")
+    suspend fun filePathsForConversation(conversationId: String): List<String>
+
+    @Query("SELECT id FROM messages WHERE conversationId = :conversationId AND outgoing = 1 AND status IN ('QUEUED','SENDING','SENT')")
+    suspend fun pendingIdsForConversation(conversationId: String): List<String>
 
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun deleteForConversation(conversationId: String)
@@ -188,7 +199,7 @@ interface MessageDao {
     suspend fun setStarred(id: String, starred: Boolean)
 
     @Query(
-        "SELECT * FROM messages WHERE deletedAt IS NULL AND body LIKE :pattern " +
+        "SELECT * FROM messages WHERE deletedAt IS NULL AND body LIKE :pattern ESCAPE '\\' " +
             "AND (:conversationId IS NULL OR conversationId = :conversationId) " +
             "ORDER BY timestamp DESC LIMIT 200"
     )
@@ -236,11 +247,13 @@ interface ContactDao {
     @Query("DELETE FROM contacts")
     suspend fun deleteAll()
 
+    // The escape clause used to read '\\' inside a raw string, which is two characters. SQLite
+    // rejects that when it evaluates the first row, so every local search failed as soon as one
+    // contact existed. The queries are ordinary strings now, where "\\" is one backslash.
     @Query(
-        """SELECT * FROM contacts
-           WHERE displayName LIKE :pattern ESCAPE '\\'
-              OR IFNULL(username, '') LIKE :pattern ESCAPE '\\'
-           ORDER BY displayName ASC LIMIT 200"""
+        "SELECT * FROM contacts WHERE displayName LIKE :pattern ESCAPE '\\' " +
+            "OR IFNULL(username, '') LIKE :pattern ESCAPE '\\' " +
+            "ORDER BY displayName ASC LIMIT 200"
     )
     suspend fun search(pattern: String): List<ContactEntity>
 }
@@ -250,8 +263,22 @@ interface RelayDao {
     @Query("SELECT * FROM relay_queue ORDER BY createdAt ASC")
     suspend fun getAll(): List<RelayEntity>
 
-    @Query("SELECT * FROM relay_queue WHERE targetDeviceId = :deviceId OR targetDeviceId IS NULL ORDER BY createdAt ASC")
-    suspend fun forDevice(deviceId: String): List<RelayEntity>
+    /**
+     * Packets for one device, least-tried first. Bounded: every row carries up to 44 KB of
+     * ciphertext, and a queued file is hundreds of rows.
+     */
+    @Query(
+        "SELECT * FROM relay_queue WHERE targetDeviceId = :deviceId OR targetDeviceId IS NULL " +
+            "ORDER BY attempts ASC, createdAt ASC LIMIT :limit"
+    )
+    suspend fun forDevice(deviceId: String, limit: Int): List<RelayEntity>
+
+    /** The queue without the ciphertext, least-tried first, to decide what to load and send. */
+    @Query("SELECT packetId, targetDeviceId, expiresAt FROM relay_queue ORDER BY attempts ASC, createdAt ASC")
+    suspend fun refs(): List<RelayRef>
+
+    @Query("SELECT * FROM relay_queue WHERE packetId = :packetId")
+    suspend fun getById(packetId: String): RelayEntity?
 
     /** Atomic claim so two senders never enqueue the same packet twice. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -262,6 +289,13 @@ interface RelayDao {
 
     @Query("DELETE FROM relay_queue WHERE msgId = :msgId")
     suspend fun deleteForMessage(msgId: String)
+
+    @Query("SELECT COUNT(*) FROM relay_queue WHERE msgId = :msgId AND targetDeviceId = :deviceId")
+    suspend fun countForMessageAndTarget(msgId: String, deviceId: String): Int
+
+    /** One recipient has the message; the copies queued for the other group members stay. */
+    @Query("DELETE FROM relay_queue WHERE msgId = :msgId AND targetDeviceId = :deviceId")
+    suspend fun deleteForMessageAndTarget(msgId: String, deviceId: String)
 
     @Query("DELETE FROM relay_queue WHERE expiresAt < :now")
     suspend fun purgeExpired(now: Long)
@@ -496,7 +530,10 @@ interface PeerDao {
     @Query("SELECT * FROM peer_profiles")
     suspend fun profiles(): List<PeerProfileEntity>
 
-    @Query("SELECT * FROM peer_profiles WHERE displayName LIKE :pattern OR username LIKE :pattern LIMIT 50")
+    @Query(
+        "SELECT * FROM peer_profiles WHERE displayName LIKE :pattern ESCAPE '\\' " +
+            "OR username LIKE :pattern ESCAPE '\\' LIMIT 50"
+    )
     suspend fun searchProfiles(pattern: String): List<PeerProfileEntity>
 
     @Query("SELECT * FROM peer_devices WHERE userId = :userId ORDER BY revoked ASC, lastSeenAt DESC")

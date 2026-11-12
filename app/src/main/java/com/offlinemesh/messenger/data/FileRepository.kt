@@ -6,6 +6,8 @@ import com.offlinemesh.messenger.core.crypto.FileVault
 import com.offlinemesh.messenger.core.media.LocalMediaProbe
 import com.offlinemesh.messenger.core.media.MediaMetadataHelper
 import com.offlinemesh.messenger.core.mesh.FileChunker
+import com.offlinemesh.messenger.core.mesh.MeshInboundPolicy
+import com.offlinemesh.messenger.core.mesh.RoutingPolicy
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -17,7 +19,14 @@ import java.util.UUID
  * in the app's private directory; the plaintext staging area is the cache directory, which is
  * wiped as soon as a transfer completes.
  */
-class FileRepository(private val context: Context, private val vault: FileVault = FileVault()) {
+class FileRepository(
+    private val context: Context,
+    private val vault: FileVault = FileVault(),
+    /** Root for every directory below, instead of the app's files/cache directories (tests). */
+    baseDir: File? = null
+) {
+    private val filesRoot: File = baseDir?.let { File(it, "files") } ?: context.filesDir
+    private val cacheRoot: File = baseDir?.let { File(it, "cache") } ?: context.cacheDir
 
     data class StoredAttachment(val file: File, val name: String, val size: Long)
 
@@ -27,12 +36,12 @@ class FileRepository(private val context: Context, private val vault: FileVault 
         val plainSha256Hex: String
     )
 
-    private fun attachmentsDir(): File = File(context.filesDir, "attachments").apply { mkdirs() }
-    private fun stagingDir(): File = File(context.cacheDir, "staging").apply { mkdirs() }
-    fun shareDir(): File = File(context.cacheDir, "share").apply { mkdirs() }
-    private fun encUploadDir(): File = File(context.cacheDir, "encrypted_uploads").apply { mkdirs() }
-    private fun encDownloadDir(): File = File(context.cacheDir, "encrypted_downloads").apply { mkdirs() }
-    private fun plainStagingDir(): File = File(context.cacheDir, "plain_staging").apply { mkdirs() }
+    private fun attachmentsDir(): File = File(filesRoot, "attachments").apply { mkdirs() }
+    private fun stagingDir(): File = File(cacheRoot, "staging").apply { mkdirs() }
+    fun shareDir(): File = File(cacheRoot, "share").apply { mkdirs() }
+    private fun encUploadDir(): File = File(cacheRoot, "encrypted_uploads").apply { mkdirs() }
+    private fun encDownloadDir(): File = File(cacheRoot, "encrypted_downloads").apply { mkdirs() }
+    private fun plainStagingDir(): File = File(cacheRoot, "plain_staging").apply { mkdirs() }
     private fun voiceFile(id: String): File = File(attachmentsDir(), "voice_$id.enc")
     private fun attachmentFile(id: String): File = File(attachmentsDir(), "file_$id.enc")
 
@@ -48,7 +57,36 @@ class FileRepository(private val context: Context, private val vault: FileVault 
         return StoredAttachment(destination, displayName, source.length())
     }
 
-    fun stagingFileFor(fileId: String): File = File(stagingDir(), fileId).apply { mkdirs() }
+    /**
+     * Directory that collects the chunks of one incoming transfer.
+     *
+     * [fileId] arrives from another device. It is checked here as well as at the call site: this
+     * is the last point before the value becomes a path, and a value such as `../../files/x`
+     * must never get that far.
+     */
+    fun stagingFileFor(fileId: String): File {
+        require(MeshInboundPolicy.isSafeFileId(fileId)) { "unsafe transfer id" }
+        return File(stagingDir(), fileId).apply { mkdirs() }
+    }
+
+    /**
+     * Removes reassembly directories nothing has been written to for [maxAgeMs]. Chunks are
+     * plaintext; a transfer whose remaining packets expired on the sender would otherwise leave
+     * them in the cache indefinitely.
+     */
+    fun purgeStaleStaging(maxAgeMs: Long = RoutingPolicy.STORE_FORWARD_MS + 3_600_000L): Int {
+        val cutoff = System.currentTimeMillis() - maxAgeMs
+        var removed = 0
+        stagingDir().listFiles()?.forEach { dir ->
+            val newest = (dir.listFiles()?.maxOfOrNull { it.lastModified() } ?: 0L)
+                .coerceAtLeast(dir.lastModified())
+            if (newest < cutoff) {
+                dir.deleteRec()
+                removed++
+            }
+        }
+        return removed
+    }
 
     fun writeChunk(fileId: String, index: Int, bytes: ByteArray) {
         FileChunker.writeChunk(stagingFileFor(fileId), index, bytes)
@@ -65,6 +103,8 @@ class FileRepository(private val context: Context, private val vault: FileVault 
         val assembled = File(staging, "assembled.bin")
         val complete = FileChunker.assemble(staging, totalChunks, assembled) ?: return null
         val destination = if (isVoice) voiceFile(fileId) else attachmentFile(fileId)
+        // If sealing fails (for example the disk is full) the chunks stay, so that a retransmitted
+        // chunk can complete the transfer later; purgeStaleStaging() removes what never completes.
         vault.sealFile(complete, destination)
         val size = complete.length()
         FileChunker.cleanup(staging)
@@ -74,13 +114,31 @@ class FileRepository(private val context: Context, private val vault: FileVault 
     /** Decrypts a sealed file into the cache so an external viewer can open it. */
     fun exportForOpening(sealed: File, displayName: String): File? {
         if (!sealed.isFile) return null
-        val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
+        val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").trimStart('.').take(80)
             .ifBlank { "attachment" }
         val target = File(shareDir(), safeName)
         return try {
             vault.open(sealed, target)
             target
         } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Decrypts a sealed attachment into a private temporary file so that it can be cut into mesh
+     * chunks. Unlike [exportForOpening] the copy is named after the message, not the attachment
+     * (two files called `image.jpg` no longer overwrite each other mid-transfer), and it lives
+     * outside the directory that is shared with other apps. The caller deletes it.
+     */
+    fun exportForMesh(sealed: File, messageId: String): File? {
+        if (!sealed.isFile) return null
+        val target = File(plainStagingDir(), "mesh_${UUID.randomUUID()}_${messageId.take(8).filter { it.isLetterOrDigit() }}.bin")
+        return try {
+            vault.open(sealed, target)
+            target
+        } catch (e: Exception) {
+            target.delete()
             null
         }
     }
@@ -208,6 +266,7 @@ class FileRepository(private val context: Context, private val vault: FileVault 
         encDownloadDir().listFiles()?.forEach { f ->
             if (f.isFile && f.lastModified() < partCutoff) runCatching { f.delete() }
         }
+        runCatching { purgeStaleStaging() }
     }
 
     fun clearAll() {

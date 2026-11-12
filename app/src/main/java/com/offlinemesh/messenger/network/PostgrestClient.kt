@@ -68,6 +68,22 @@ class PostgrestClient(
         )
     }
 
+    /**
+     * PATCH that reports how many rows it changed. Row-level security does not reject an update
+     * it filters out - the statement simply matches nothing and still answers 2xx - so a caller
+     * that needs to know whether the write happened has to count.
+     */
+    suspend fun patchCounting(table: String, params: List<Pair<String, String>>, values: JsonObject): Int {
+        val text = http.execute(
+            method = "PATCH",
+            url = restUrl(table, params + ("select" to "id")),
+            body = values.toString(),
+            bearer = token(),
+            headers = mapOf("Prefer" to "return=representation")
+        )
+        return runCatching { (json.parseToJsonElement(text) as JsonArray).size }.getOrDefault(0)
+    }
+
     suspend fun delete(table: String, params: List<Pair<String, String>>) {
         http.execute(
             method = "DELETE",

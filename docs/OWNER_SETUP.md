@@ -40,6 +40,13 @@ export FIREBASE_SENDER_ID="1234567890"
 ./gradlew assembleDemo -PdemoSign=true
 ```
 
+**For the APKs built by GitHub Actions** (the demo build and the signed release) the same four
+values must be stored as repository secrets with exactly these names - *Settings → Secrets and
+variables → Actions*: `FIREBASE_APP_ID`, `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`,
+`FIREBASE_SENDER_ID`. Until 2026-11-12 no workflow passed them to Gradle, so **every APK that CI has
+published so far was built without push**, whatever was configured elsewhere. The workflows read
+them now; while they are unset the build still succeeds and the app has no push.
+
 ### Step 1C — Configure `FCM_SERVICE_ACCOUNT_JSON` on Supabase
 
 1. In Firebase Console -> **Project settings -> Service accounts**, click **Generate new private key** to download the FCM HTTP v1 JSON key.
@@ -105,13 +112,17 @@ Edge Functions at version 1 with `verify_jwt = false`. Not yet applied:
 | --- | --- |
 | `20261112070000_mm_social_graph_authz.sql` | S-2 (social-graph enumeration), service-role rate limiter |
 | `20261112120000_mm_write_path_hardening.sql` | W-1 … W-19 (direct writes around the RPCs), and the constraint that rejected photo/video/audio messages |
+| `20261113090000_mm_privacy_quota_pins_timers_admin.sql` | P-1 … P-3 (who can see a profile, a device list, a membership row), Q-1 (media quota), plus message timers, pins and group administration |
 
-Both are idempotent, touch only `mm_*` objects, the `mm_private` schema and the policies of the two
-`mm-*` buckets, and delete no row. Apply them **in this order**:
+All three are idempotent, touch only `mm_*` objects, the `mm_private` schema and the policies of the
+two `mm-*` buckets, and delete no row. The third one additionally creates three triggers on
+`storage.objects` (each restricted to bucket `mm-media` by its `WHEN` clause, so objects of the
+other application never reach them) and one `pg_cron` job, `mm_purge_expired_messages`, which
+deletes Messenger messages whose timer has run out - nothing else. Apply them **in this order**:
 
 ```bash
 supabase link --project-ref lnhmbjqjfrnqkpsjpszb
-supabase db push          # shows the pending files first; confirm that only these two are listed
+supabase db push          # shows the pending files first; confirm that only these three are listed
 
 # Redeploy the three functions; supabase/config.toml sets verify_jwt = true for each,
 # so the gateway flag changes with the deployment, not by hand. The deployed mm-push-dispatch
@@ -121,9 +132,19 @@ supabase functions deploy mm-turn-credentials
 supabase functions deploy mm-push-dispatch
 ```
 
-If `supabase db push` lists more than those two files (the version numbers recorded in the live
-history may not match the file names), do not force it: paste the two
+If `supabase db push` lists more than those three files (the version numbers recorded in the live
+history may not match the file names), do not force it: paste the three
 files into the SQL editor instead, one after the other. Re-running any Messenger migration is safe.
+
+**Order relative to the app.** Apply the migrations and redeploy the functions first, then
+distribute the new APK. The app in this repository works against the database with or without
+`20261113090000` (it does not call the new functions yet), but it does depend on
+`20261112120000` for photo, video and audio messages. Nobody has run this app against the migrated
+live database yet; that is what Suite H and Suite J of the validation document are for.
+
+**The mesh protocol changed.** Independently of the backend: phones running an older build and
+phones running this one cannot exchange *offline* messages (protocol 1 vs 2). Update every phone
+that should talk over the mesh at the same time.
 
 Verify afterwards (read-only, from the SQL editor or `psql`):
 
@@ -144,12 +165,28 @@ select has_table_privilege('authenticated', 'public.mm_conversation_members', 'I
        has_table_privilege('anon', 'public.mm_messages', 'SELECT');                       -- false
 -- exactly one call-state function is left
 select count(*) from pg_proc where proname = 'mm_set_call_state';                         -- 1
+
+-- after 20261113090000 ---------------------------------------------------------------
+-- presence and other members' mute settings are not readable
+select has_column_privilege('authenticated', 'public.mm_profiles', 'last_seen_at', 'SELECT'),            -- false
+       has_column_privilege('authenticated', 'public.mm_conversation_members', 'muted_until', 'SELECT'); -- false
+-- clients cannot set an expiry, purge, or list another account's media
+select has_column_privilege('authenticated', 'public.mm_messages', 'expires_at', 'INSERT'),              -- false
+       has_function_privilege('authenticated', 'public.mm_purge_expired_messages()', 'EXECUTE'),         -- false
+       has_function_privilege('authenticated', 'public.mm_media_objects_of(uuid)', 'EXECUTE');           -- false
+-- the purge job exists exactly once, and the quota triggers are scoped to mm-media
+select count(*) from cron.job where jobname = 'mm_purge_expired_messages';                -- 1
+select tgname, pg_get_triggerdef(oid) from pg_trigger
+ where tgrelid = 'storage.objects'::regclass and tgname like 'mm_media_usage_track%';     -- 3 rows, each "WHEN ... 'mm-media'"
 ```
 
 Then do the two-device pass in `docs/TWO_DEVICE_VALIDATION.md`: it is the first time these rules
 meet the real platform (PostgREST, Storage, real access tokens) rather than the test stub.
 
-**Rollback.** Neither migration modifies or deletes data, so there is nothing to restore. If the
+**Rollback.** None of the migrations modifies or deletes data, so there is nothing to restore. To
+switch off the only part of `20261113090000` that ever deletes anything, unschedule the job:
+`select cron.unschedule('mm_purge_expired_messages');` (no conversation has a timer until somebody
+sets one through `mm_set_message_ttl`, so on a fresh rollout the job finds nothing). If the
 write-path migration blocks something legitimate, the narrow remedy is to grant the missing
 statement on that one table (for example `grant update (some_column) on public.mm_x to
 authenticated;`) and report it, not to revert the file. Reverting `20261112070000` would mean

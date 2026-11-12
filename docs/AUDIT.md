@@ -7,7 +7,7 @@ is stated in Part A where it still matters.
 
 ---
 
-## Part A — Current findings (2026-11-12, second and third pass)
+## Part A — Current findings (2026-11-12, second, third and fourth pass)
 
 Method: the source tree on this branch, every migration, the three Edge Function sources, the CI
 workflows, and — because the audit environment has no route to `supabase.co` — a **real PostgreSQL 16
@@ -25,7 +25,7 @@ branch, not locally (see A.5).
 | S-4 | **Medium** | **Fixed** (`_shared/rate_limit.ts`, `20261112070000`) | The rate-limit blocks in `mm-push-dispatch` and `mm-turn-credentials` wrote into `mm_rate_limits` with columns that do not exist (`user_id`, `bucket`, `count` vs `subject`, `action`, `window_start`, `hits`) and discarded the error, so **neither function was throttled** despite documenting a limit. Replaced with an atomic `mm_consume_rate_limit_as()` (service-role only, allow-listed actions) that fails closed; `mm-account-delete` gains a limit too. |
 | D-1 | Medium | **Fixed** (earlier pass) | Documentation drift (README/ARCHITECTURE/SUPABASE/OWNER_SETUP vs the code). |
 | D-2 | Low | **Fixed** (earlier pass) | Release signing secret names did not match `release.yml`. |
-| T-1 | Medium | **Partly fixed** | 15 JVM test classes run in CI, and the first **Android instrumentation tests** now run in CI on a KVM-accelerated emulator: the SQLCipher database file is asserted to have no SQLite header and no plaintext canary, the Keystore-wrapped passphrase survives close/reopen, and the schema contains the expected tables. Still missing: navigation, notification and migration instrumentation tests. |
+| T-1 | Medium | **Partly fixed** | 15 JVM test classes run in CI, and the first **Android instrumentation tests** now run in CI on a KVM-accelerated emulator: the SQLCipher database file is asserted to have no SQLite header and no plaintext canary, the Keystore-wrapped passphrase survives close/reopen, and the schema contains the expected tables. The fourth pass added the mesh protocol suite (several complete device stacks with real Signal sessions and a simulated radio), the search queries against a real SQLite, and attachment forwarding (A.7). Still missing: anything that drives the UI, notifications, the online sync path against a server, and Room migrations on a device. |
 | T-2 | Medium | **Open** | No physical two-device validation of the current build. Requires the owner's phones; the validation pack is in [`TWO_DEVICE_VALIDATION.md`](TWO_DEVICE_VALIDATION.md). |
 | T-3 | Low | **Fixed** | No automated check that the English and Persian resource files cover the same keys, and no check that every declared dependency has a licence entry. Both are now CI steps (`tools/check_string_parity.sh`, `tools/license_inventory.py`). |
 | B-1 | Medium | **Resolved for this milestone** | Android compilation, unit tests, lint, debug/demo packaging and the Room schema check cannot run in the audit sandbox (no JDK, no Android SDK, no Maven/Gradle network). They run on GitHub Actions; this branch's `CI` run is the build evidence, and the backend work was verified locally against real PostgreSQL. |
@@ -33,6 +33,9 @@ branch, not locally (see A.5).
 | L-2 | Medium | **Fixed** (earlier pass) | The in-app licences screen exists (`presentation/screens/LicencesScreen.kt`, asset built by `tools/build_licence_asset.py`). An earlier revision of this table still listed it as missing. |
 | W-1 … W-19 | **High** (several) | **Fixed in the repository, not yet applied to the live project** | Third pass: the write path. A signed-in client could skip the RPCs and write rows directly. See [A.6](#a6-third-pass-2026-11-12-the-write-path). |
 | E-1 | **High, functional** | **Fixed in the repository, not yet redeployed** | `mm-push-dispatch` refused every message wake-up because it selected a column that does not exist. See A.6. |
+| M-1 … M-9 | **High** (M-1 … M-3) | **Fixed**, M-6 partly | Fourth pass: the offline mesh trusted its clear packet header. Forged receipts, messages moved between chats by a relay, a path traversal in file receive, and several delivery defects. See [A.7](#a7-fourth-pass-2026-11-12-the-android-client-and-the-rest-of-the-backend). |
+| R-1 … R-3, FP-1, I-1, BG-1 … BG-4 | **High** (R-2, R-3), Medium | **Fixed** | Fourth pass: local search failed for every user with a contact; forwarding an attachment sent an unreadable file and destroyed the original; edits and deletes that the server refused looked successful; any app could answer a ringing call; background delivery defects. See A.7. |
+| P-1 … P-3, Q-1, E-2, E-3 | **High** (P-1, P-2) | **Fixed in the repository, not yet applied to the live project** | Fourth pass: anybody could read any profile (including presence) by adding its id to their own contact list; joining a public channel exposed every subscriber's profile and device keys; push dispatch ignored failed lookups; account deletion left media behind. See A.7. |
 | F-1 | — | Not implemented | Group calls (need an SFU), stories, polls, scheduled/silent messages, bots and Mini Apps, search filters, pinned messages, disappearing messages, chat folders. Listed honestly in `docs/ROADMAP.md`. |
 
 ### A.2 Verified as correct (no change needed)
@@ -69,10 +72,11 @@ branch, not locally (see A.5).
 
 ### A.4 Remaining work, in priority order
 
-0. **Apply migrations `20261112070000` and `20261112120000` to the live project and redeploy the
-   three Edge Functions** (owner action, see A.6 "Deployment"). Until then the live database still
-   has every weakness listed in S-2 and A.6.
-1. T-2: two-device validation of online media, sync, calls and mesh↔online switching.
+0. **Apply migrations `20261112070000`, `20261112120000` and `20261113090000` to the live project
+   and redeploy the three Edge Functions** (owner action, `docs/OWNER_SETUP.md` §4). Until then the
+   live database still has every weakness listed in S-2, A.6 and the backend part of A.7.
+1. T-2: two-device validation of online media, sync, calls and mesh↔online switching, **and of mesh
+   protocol 2** (Suite I), which has only ever run on an emulator with the radio replaced.
 2. L-1: the owner's licence decision (the in-app licences screen, L-2, is done).
 3. T-1: the remaining instrumentation coverage (navigation, notifications, Room migrations);
    the storage and Keystore cases are already in CI.
@@ -188,16 +192,127 @@ database is no worse than the old one.
   readable (display name, username, avatar, bio). The id has to be known first and the same fields
   are returned by username search, so this is Low; changing it means deciding whether contacts
   require consent, which is a product decision.
+  *Reassessed in the fourth pass:* the readable row also carried `last_seen_at`, which username
+  search does not return, so this was a presence tracker and not Low. Fixed as P-1 (A.7).
 * **Quota cost.** `mm_private.media_quota_ok` sums the caller's objects in `storage.objects` on
   every upload. That table has no index on the owner columns and belongs to the platform, so the
   check is linear in the size of the bucket. Fine at the current scale; needs a counter table
-  before the bucket holds millions of objects.
+  before the bucket holds millions of objects. *Done in the fourth pass as Q-1 (A.7).*
 * **Error codes.** The schema's custom SQLSTATEs start at `P0001`, which collide with PL/pgSQL's
   own (`P0002` no_data_found, `P0004` assert_failure). PostgREST passes them through unchanged, so
   clients are unaffected, but inside PL/pgSQL `WHEN OTHERS` does not catch `P0004`
   ("device_not_found"). Renumbering would change the client contract; not done.
 * **Session tombstones** are keyed on the `session_id` claim. A token without that claim (custom
   JWTs) cannot be tombstoned; such a caller can still not re-activate a revoked device.
+
+### A.7 Fourth pass (2026-11-12): the Android client and the rest of the backend
+
+**Question asked.** The earlier passes were about the server. This one read the Android client as an
+attacker in radio range, a malicious contact, another app on the same phone, and an ordinary user
+whose network fails at the wrong moment would meet it - and went back to the backend for what a
+signed-in stranger can *read*.
+
+**What was read, and what was not.** Read completely: the mesh layer (`core/mesh/*`,
+`ChatRepository` send/receive/queue paths), `FileRepository`, `ContactRepository`, the services, the
+workers, the push path, launch-intent handling, the manifest, the DAOs, the release workflow, all
+migrations and the three Edge Functions. Read in part: `OnlineSync`/`OnlineApi` (the write paths and
+the push wake-up, not every sync branch), `CryptoManager` and `SignalStore`. **Not read:** most of
+`presentation/screens/*` and the navigation graph, `PreKeyBundleCodec`, `SecretStore`,
+`MediaTransferWorker`, `WebRtcCallManager`. Findings in unread code are therefore still possible,
+and the absence of findings in the cryptographic code is not an audit of it.
+
+**How each finding is known.** "Emulator" means a test in `app/src/androidTest` that carries out
+the attack or the failure against the fixed code and runs in CI (the tests were written after the
+fixes; they were not run against the old code); "PostgreSQL" means the backend suite; "SQLite" means
+reproduced with the same statement on a stock SQLite; "read" means established from the source
+only, fixed, compiled by CI, and **not** exercised.
+
+#### Offline mesh
+
+| ID | Severity | Finding | Fixed by | Known from |
+| --- | --- | --- | --- | --- |
+| M-1 | **High** | A delivery receipt was a clear header naming a message id, accepted from any device in range. One forged frame showed "delivered" and made the sender delete the ciphertext queued for the real recipient: silent message loss on demand. | Receipts are encrypted packets, accepted only from the device the queued packet was for. | Emulator (`aReceiptCannotBeForged`) |
+| M-2 | **High** | Group id, group name, message id, timestamp and attachment metadata were read from the clear header. A relay could move a message into another chat, rename a group, rewrite the time or the message id. A contact could write into the direct chat of two other people, because a direct chat's id is the peer's device id and a "group" packet with that id was accepted. | All of it travels inside the Signal ciphertext (`SealedPayload`) and the header is only compared against it. Group packets need a stored mesh group and a member as sender. | Emulator (four cases) |
+| M-3 | **High** | The transfer id of an incoming file became a directory name unchecked: `../../files/x` wrote outside the staging directory, inside the app's private storage. Chunk index, count and size were unchecked; a transfer could be completed by chunks from a different contact. | Ids validated at the call site and again where the path is built; metadata must describe one consistent transfer; a transfer is bound to its conversation and message. | Emulator (two cases) |
+| M-4 | Medium, functional | A packet was removed from the queue once written to a link. If the link dropped a moment later it was gone and the message stayed "sent" for ever. Receipts were not relayed, so a relayed message could never become "delivered". Store-and-forward expired after seven minutes. | Packets stay queued until confirmed and are repeated; repeats are re-acknowledged; receipts are relayed; expiry is 24 hours. | Emulator (lost receipt, absent device, relay) |
+| M-5 | Medium, functional | The queue held 600 packets; a file above about 19 MB for an absent recipient was cut off without a word. The retry pass always took the same 200 oldest packets, so one absent device starved everybody else. | 2,000 packets, least-tried first, a visible failure when a file cannot fit. | JVM tests; read |
+| M-6 | Medium | A HELLO with a known device id and a different identity key replaced that device's route. | Refused. **Partly fixed:** a HELLO is still not a proof of possession, see below. | Read |
+| M-7 | Medium, functional | Only the creator of a mesh group could write in it: the others never learned the member list. | The sealed header carries it; membership rules in `docs/SECURITY.md` 5.1. | Emulator |
+| M-8 | Low | Every retry re-encrypted a text that was still queued, advancing the ratchet each time. | The queued ciphertext is re-sent. | Read |
+| M-9 | Low | Retrying a failed mesh-only attachment scheduled an online upload that could not happen. | Re-sent over the mesh. | Read |
+
+The protocol change is incompatible: version 1 and version 2 devices ignore each other on the mesh.
+
+#### Messages, search, files
+
+| ID | Severity | Finding | Fixed by | Known from |
+| --- | --- | --- | --- | --- |
+| R-1 | Medium | Edit and delete-for-everyone changed the local copy and ignored the server. A delete after 24 hours is filtered out by row-level security *without an error*, so the sender saw the message disappear while everybody else kept it. Reaction toggling compared against the emoji's total count. Deleting an online group ignored a failed leave. | The server is asked first; zero changed rows is a failure; the user is told. | Read; the server-side rule is covered by the PostgreSQL suite |
+| R-2 | **High** | Forwarding an attachment passed the stored file - sealed with a key that never leaves this phone - to functions that expect plaintext and delete their input. The recipient got a file nobody can open, and the forwarded message lost its attachment. | A decrypted temporary copy is sent. | Emulator (`forwardingAnAttachmentSendsTheFileItselfAndKeepsTheOriginal`) |
+| R-3 | **High**, functional | The contact search query declared a two-character `ESCAPE`. Room accepts that at build time; SQLite rejects it when it compares the first row. Every local search threw as soon as one contact existed, inside a coroutine without a handler. The message and chat queries had no `ESCAPE` at all, so `%` and `_` were never found. | One-character escape everywhere, one pattern builder, a handler in the view model. | SQLite; emulator (`LocalSearchInstrumentedTest`) |
+| FP-1 | Medium | `FileProvider` covered the whole cache directory, which also holds decrypted temporaries. | Only `cache/share/`. | Read |
+
+R-3 deserves a sentence of its own: by the code, **search has not worked for any user with a contact
+since it was written**, and nothing in CI could have noticed. It is the clearest argument in this
+repository for the two-device pass - a person would have found it in a minute.
+
+#### Other apps, background work
+
+| ID | Severity | Finding | Fixed by | Known from |
+| --- | --- | --- | --- | --- |
+| I-1 | Medium | The launcher activity is exported, and the extras that answer a ringing call were honoured from any sender: another app on the phone could answer a ringing call. Conversation and call ids from intents and `offlinemesh://` links were used unvalidated. | Answering needs a per-installation token that only this app's own notification carries; ids are validated (`LaunchIntentPolicy`). | JVM test of the policy; the Android wiring is read only |
+| BG-1 | Medium | A push wake-up was recorded as handled before it was handled. If the phone had no session or no network at that moment, the server's repeat was discarded as a duplicate for ten minutes. | Forgotten again when handling fails. | JVM test |
+| BG-2 | Low | `OutboxWorker` reported success whatever happened. | Retries while the outbox is not empty. | Read |
+| BG-3 | Low | `SyncWorker` swallowed the errors of every step but one. | Each step runs and is reported. | Read |
+| BG-4 | Medium | No workflow passed the Firebase client options to Gradle. Every APK built by CI - the demo build and the signed release - was built without push, whatever the owner configured. | Workflows read four repository secrets (`docs/OWNER_SETUP.md` 1B). **They are not set yet.** | Read |
+
+#### Backend (migration `20261113090000`, Edge Functions)
+
+| ID | Severity | Finding | Fixed by | Known from |
+| --- | --- | --- | --- | --- |
+| P-1 | **High** | A profile row was readable by anyone who put its id into *their own* contact list or sent it a contact request. The row included `last_seen_at`: a presence tracker for arbitrary accounts that the target could not see or stop, block list ignored. | A contact counts only when mutual; a block ends it; `last_seen_at` is not selectable. | PostgreSQL |
+| P-2 | **High** | "Shares a conversation" included public channels. Subscribing to one exposed every other subscriber's profile, device list (identity keys, device names, platform) and membership. | In a channel subscribers see the staff and the staff see subscribers; subscribers do not see each other. | PostgreSQL |
+| P-3 | Low | Every member could read every other member's mute settings. | Column privileges; `mm_my_memberships()` for one's own. | PostgreSQL |
+| Q-1 | Low | The media quota summed the bucket on every upload. | Per-account counters maintained by triggers scoped to `mm-media`. | PostgreSQL |
+| E-2 | Medium | `mm-push-dispatch` treated a failed lookup as an empty result: when the block or preference query failed, blocked and muted users were notified anyway. Large recipient lists exceeded the URL length and were silently dropped. | Fails closed; lists are sliced. | Read; Deno type-check; column check against the schema |
+| E-3 | Medium | `mm-account-delete` took the list of media from the attachment rows and ignored every error on the way. An upload whose row was never written, anything beyond the first page of rows, or a failed storage call left ciphertext in the bucket while the account's rows were deleted - after which nothing pointed at it. | Media is listed by storage ownership (`mm_media_objects_of`) and removed in batches first; any failure stops before a row is deleted. | Read; Deno type-check |
+
+The same migration adds what the write-path hardening had made impossible - **administration of
+groups and channels** (G-1: rename, roles, ownership transfer, invite rotation, bans) - and two
+server capabilities, **message timers** (DM-1) and **pinned messages**. They are specified by the
+suite and have no client.
+
+#### Not done
+
+* **HELLO is not authenticated (rest of M-6).** A device that replays another device's genuine
+  HELLO is given its route until the real one connects. It cannot read or forge anything and
+  nothing is lost (packets stay queued until the real device confirms them), but it can delay
+  delivery. The fix is a signed challenge in the handshake - another protocol change.
+* **No client for timers, pins, administration.** In particular the app does not delete its local
+  copy when a message expires. The server side alone is not "disappearing messages" and must not be
+  presented as such.
+* **Mute does not sync between a user's devices**; `mm_my_memberships()` exists for it and is unused.
+* **Mesh groups have no administrator.** Any member can add members. Documented, not fixed.
+* **Mesh metadata is in the clear** (who, to whom, when, how much). By design of a relayed mesh;
+  documented in `docs/SECURITY.md` 5.1.
+* **Unmeasured:** the battery cost of repeating unconfirmed packets every 15-20 seconds while a
+  peer is connected.
+* Smaller things seen and left: a malformed text payload is shown as an empty message; the pre-key
+  in a HELLO is reused across handshakes; a corrupt stored session is replaced by a fresh one
+  without telling the user.
+
+#### What the tests do and do not show
+
+`MeshProtocolInstrumentedTest` runs two to four complete device stacks - separate databases, real
+libsignal identities and sessions, the real `ChatRepository` and file store - on an emulator, and
+replaces only the radio with an in-process hub that can drop, rewrite and inject frames. The hub
+routes with the same `FrameRouting` function as the real transport. That is strong evidence for the
+protocol logic and none for Nearby Connections: discovery, real link loss, throughput, and behaviour
+under Android's background limits are untested, as before.
+
+The backend suites run against a stub of the Supabase platform on PostgreSQL 16. The new suite was
+mutation-tested (eight weakenings of the migration, each detected). Nothing in this pass has run
+against the live project, PostgREST, Storage or Realtime.
 
 ## Part B — Historical audit (2026-11-11, base `5880f98`)
 

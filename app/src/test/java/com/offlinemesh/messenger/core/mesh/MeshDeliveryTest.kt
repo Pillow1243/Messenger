@@ -71,3 +71,42 @@ class RetryPolicyTest {
         assertFalse(RetryPolicy.shouldRetry(RetryPolicy.MAX_ATTEMPTS))
     }
 }
+
+class TransmitLogTest {
+
+    @Test
+    fun `a packet that was never sent is due`() {
+        assertTrue(TransmitLog().due("p1", now = 1_000, intervalMs = 10_000))
+    }
+
+    @Test
+    fun `a packet is not repeated inside the interval and is repeated after it`() {
+        val log = TransmitLog()
+        log.mark("p1", 1_000)
+        assertFalse(log.due("p1", now = 5_000, intervalMs = 10_000))
+        assertTrue(log.due("p1", now = 11_000, intervalMs = 10_000))
+        assertTrue(log.due("p2", now = 5_000, intervalMs = 10_000))
+    }
+
+    @Test
+    fun `a clock that jumps backwards does not silence a packet`() {
+        val log = TransmitLog()
+        log.mark("p1", 1_000_000)
+        assertTrue(log.due("p1", now = 5, intervalMs = 10_000))
+    }
+
+    @Test
+    fun `the log is bounded and forgets the least recently used packets first`() {
+        val memo = BoundedMemo<Long>(maxEntries = 3)
+        for (index in 0 until 10) memo.put("p$index", index.toLong())
+        assertEquals(3, memo.size())
+        assertEquals(null, memo.get("p0"))
+        assertEquals(9L, memo.get("p9"))
+        // Reading p7 makes it the most recently used, so p8 goes first.
+        memo.get("p7")
+        memo.put("p10", 10)
+        memo.put("p11", 11)
+        assertEquals(7L, memo.get("p7"))
+        assertEquals(null, memo.get("p8"))
+    }
+}

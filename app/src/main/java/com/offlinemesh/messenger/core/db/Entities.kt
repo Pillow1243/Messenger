@@ -119,6 +119,13 @@ data class ContactEntity(
     @ColumnInfo(defaultValue = "''") val username: String = ""
 )
 
+/** Routing columns of a [RelayEntity], without the header and the ciphertext. */
+data class RelayRef(
+    val packetId: String,
+    val targetDeviceId: String?,
+    val expiresAt: Long
+)
+
 /** Packets waiting for store-and-forward delivery (always ciphertext, never plaintext). */
 @Entity(tableName = "relay_queue", indices = [Index("targetDeviceId")])
 data class RelayEntity(

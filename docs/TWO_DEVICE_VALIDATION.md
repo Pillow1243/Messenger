@@ -121,6 +121,52 @@ runs against a stub of it. Any failure here is a blocker — note the exact erro
    the app on Phone B, send a text from Phone A: Phone B shows a notification without being opened.
    Before the redeploy this never happened for messages, only for calls.
 
+### Suite I — Offline mesh, protocol 2 (both phones on this build)
+
+The emulator suite (`MeshProtocolInstrumentedTest`) runs the message layer of several devices
+against each other with the radio replaced. What it cannot show is the radio itself: discovery,
+real link drops, timing. That is what this suite is for. Both phones in Airplane Mode with
+Bluetooth and Wi-Fi on, as in Suite A. **A phone with an older build will not connect on the mesh
+at all; that is expected.**
+
+1. **Delivered means delivered** — send a text A → B in range. A shows *Delivered* within a few
+   seconds. Then switch Bluetooth and Wi-Fi off on B, send two more from A (they stay *Queued* or
+   *Sent*, never *Delivered*), switch B's radios back on: both arrive, in order, exactly once, and
+   A shows *Delivered* for both.
+2. **Link drop mid-send** — start sending a 5–10 MB file A → B and walk out of range (or switch
+   B's radios off) halfway. Come back. The file completes without being re-sent by hand, opens on
+   B, and is byte-identical (compare size, or open a photo).
+3. **Large file to an absent phone** — B out of range. Send a 30–45 MB file from A. It must stay
+   queued (not fail). Bring B into range: it arrives. Then try two such files in a row: the second
+   is expected to fail with "Too large to queue while the recipient is out of range", with a retry
+   button that works once B is nearby.
+4. **Relay** (three phones, optional) — A and C out of range of each other, B between them. A
+   sends to C: it arrives, and A shows *Delivered*. B's chat list shows nothing of it.
+5. **Group** — A creates a mesh group with B (and C). A writes; B answers; everybody sees both
+   messages under the same group name. Previously only the creator could write.
+6. **Voice note** — record and send one each way; both play.
+7. **Battery and background** — leave both phones idle with the screen off for 30 minutes, then
+   send. Note how long delivery takes and whether the phone was warm: this build repeats
+   unconfirmed packets every 15–20 seconds while a peer is connected, and nobody has measured what
+   that costs on a real device.
+
+Report for each step: pass/fail, phone models and Android versions, and for failures the status
+shown on each side.
+
+### Suite J — Backend Phase 2 (run after migration `20261113090000` is live)
+
+1. Everything in Suite B and Suite H still works: search for a user by username, send a contact
+   request, accept it, chat, see the other person's name and avatar, link a second device.
+2. **Channel privacy** — A owns a public channel; B and C subscribe. In the channel's member list
+   B sees A (staff) but not C. (Before the migration B could read C's profile and device list.)
+3. **Mute is private** — as Suite H step 5.
+4. **Delete for everyone** — delete a message sent a minute ago: it disappears on both phones.
+   Try it on a message older than 24 hours: the app says it could not delete it and the message
+   stays on both phones.
+5. **Account deletion** (use a throwaway account that has sent a photo) — delete the account in
+   the app. In the Supabase dashboard the `mm-media` bucket has no object left under that
+   account's conversations, and the `mm_profiles` row is gone.
+
 ### Suite F — Hybrid Offline <-> Online Transitions (All 10 Scenarios)
 
 1. **Mesh -> Online**: Pair & chat offline first, then sign in online and link — verify one unified conversation thread (`Mesh + online`).
@@ -147,6 +193,8 @@ runs against a stub of it. Any failure here is a blocker — note the exact erro
 | **Multi-Device (5-Device Cap, Revocation, Pre-Key Rotation, Account Delete)** | **Yes** (Live SQL RPC verification + `mm-account-delete` Edge Function) | Not run in cloud sandbox | Ready via Suite B | Enforces max 5 active devices & rotates group Sender Keys on device revocation. |
 | **EN + FA (`فارسی`) String Parity, RTL Icons & R8 Minification** | **Yes** (`tools/check_string_parity.sh`: 250/250 keys; `lintDebug`; R8 `assembleDemo`) | Not run in cloud sandbox | Ready via Suite F & G | Zero literal directional arrows; full `Icons.AutoMirrored` usage. |
 | **Archive, delete-for-me, forward, saved messages** | **Yes for the data paths** (`ChatRepository`/DAO logic compiles; local-only state) | Not run in cloud sandbox | **Ready via Suite G** | Forwarding and archive are pure local operations, so the radio tests only need to confirm delivery of the forwarded copy. |
+| **Mesh protocol 2: sealed headers, authenticated receipts, group membership, bounded file receive, retransmission** | **Yes** (`SealedPayloadTest`, `FrameRoutingTest`, `RoutingPolicyTest`, `MeshDeliveryTest` on the JVM) | **Yes** - `MeshProtocolInstrumentedTest`: two to four complete device stacks with real libsignal sessions and an in-process radio | **Not run** - Suite I | The radio (Nearby discovery, link loss, timing, battery) is exactly what the emulator suite replaces; nobody has run protocol 2 on two phones |
+| **Profile/device/membership visibility, media quota, timers, pins, group administration (migration `20261113090000`)** | **Yes for the database** (`supabase/tests/rls_privacy_quota_pins_timers_admin.sql`, mutation-tested) | N/A | **Not run** - Suite J | Not applied to the live project. Timers, pins and administration have no client yet |
 | **Social-graph authorisation hardening (S-2)** | **Yes** (`supabase/tests/rls_social_graph.sql`, plus a negative run on a pre-fix database) | N/A | Not applicable | The fix is server-side; it is live only after the owner runs `supabase db push`. |
 | **Write-path hardening (W-1 … W-19) and the client fixes that go with it** | **Yes for the database** (`supabase/tests/rls_write_path_hardening.sql`: client contract + attack matrix, on a stub of the platform); `EditPolicyTest` for edit authorship | N/A | **Not yet — Suite H** | Not live until the owner applies both pending migrations. Real PostgREST, Storage and access tokens are first exercised by Suite H. |
 | **Edge Function rate limiting & gateway JWT (S-3/S-4)** | **Yes** (Deno type-check in CI; `mm_consume_rate_limit_as` covered by the suite) | N/A | Not applicable | Requires `supabase functions deploy` for the `verify_jwt`/limiter changes to take effect live. |

@@ -86,6 +86,26 @@ class PushWakeupPolicyTest {
     }
 
     @Test
+    fun `a wakeup that could not be handled is accepted again`() {
+        val policy = PushWakeupPolicy(dedupWindowMs = 60_000L)
+        val payload = mapOf(
+            "type" to "mm_wakeup",
+            "event_kind" to "message",
+            "conversation_id" to "conv-1",
+            "target_id" to "msg-1"
+        )
+        val first = policy.acceptOrNull(payload, nowMs = 10_000L)
+        assertNotNull(first)
+        assertNull(policy.acceptOrNull(payload, nowMs = 11_000L))
+
+        // The fetch failed (no network at that moment): the next push must get through.
+        policy.forget(first!!.dedupKey)
+        assertNotNull(policy.acceptOrNull(payload, nowMs = 12_000L))
+        // And once it was handled, repeats are suppressed again.
+        assertNull(policy.acceptOrNull(payload, nowMs = 13_000L))
+    }
+
+    @Test
     fun `evicts eldest dedup keys when maxEntries is exceeded`() {
         val policy = PushWakeupPolicy(maxEntries = 3, dedupWindowMs = 600_000L)
         for (i in 1..4) {

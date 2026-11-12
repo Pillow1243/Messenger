@@ -289,4 +289,10 @@
     <string name="licences_title">مجوزهای متن‌باز</string>
     <string name="licences_settings_subtitle">اعلان‌های شخص ثالث موجود در این نسخه</string>
     <string name="licences_loading">در حال بارگذاری اعلان‌ها…</string>
+    <string name="edit_failed">ویرایش ارسال نشد. پیام تغییری نکرد.</string>
+    <string name="delete_failed">حذف برای همه انجام نشد. پیام هنوز وجود دارد.</string>
+    <string name="reaction_unavailable">واکنش‌ها به گفت‌وگوی آنلاین و اتصال نیاز دارند.</string>
+    <string name="forward_unavailable">این پیام را نمی‌توان از این دستگاه هدایت کرد.</string>
+    <string name="mesh_queue_full">برای صف‌کردن در غیاب گیرنده بیش از حد بزرگ است. وقتی گیرنده نزدیک است دوباره تلاش کنید.</string>
+    <string name="leave_failed">خروج از گفت‌وگو انجام نشد، بنابراین حذف نشد. اتصال را بررسی کنید و دوباره تلاش کنید.</string>
 </resources>

@@ -549,6 +549,11 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
                     "file_too_large" -> stringResource(R.string.file_too_large)
                     "insufficient_storage" -> stringResource(R.string.insufficient_storage)
                     "attachment_pick_failed" -> stringResource(R.string.attachment_pick_failed)
+                    "leave_failed" -> stringResource(R.string.leave_failed)
+                    "edit_failed" -> stringResource(R.string.edit_failed)
+                    "delete_failed" -> stringResource(R.string.delete_failed)
+                    "reaction_unavailable" -> stringResource(R.string.reaction_unavailable)
+                    "forward_unavailable" -> stringResource(R.string.forward_unavailable)
                     else -> stringResource(R.string.error_unknown)
                 }
                 Surface(
@@ -712,8 +717,7 @@ fun ChatScreen(vm: AppViewModel, conversationId: String, onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    vm.deleteConversation(conversationId)
-                    onBack()
+                    vm.deleteConversation(conversationId) { onBack() }
                 }) {
                     Text(
                         stringResource(R.string.action_delete),
@@ -1122,6 +1126,8 @@ private fun MediaAttachmentContent(
                 stringResource(R.string.integrity_failed)
             } else if (message.error?.contains("storage", ignoreCase = true) == true) {
                 stringResource(R.string.insufficient_storage)
+            } else if (message.error == "mesh_queue_full") {
+                stringResource(R.string.mesh_queue_full)
             } else {
                 stringResource(R.string.status_failed)
             }

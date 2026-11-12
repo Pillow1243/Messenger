@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.offlinemesh.messenger.presentation.AppViewModel
 import com.offlinemesh.messenger.presentation.navigation.NavGraph
 import com.offlinemesh.messenger.presentation.theme.OfflineMeshTheme
+import com.offlinemesh.messenger.domain.LaunchIntentPolicy
 import com.offlinemesh.messenger.service.MessageNotifier
 import kotlinx.coroutines.launch
 
@@ -89,23 +90,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractIntentTargets(intent: Intent?) {
         if (intent == null) return
-        intent.getStringExtra(MessageNotifier.EXTRA_CONVERSATION)?.takeIf { it.isNotBlank() }?.let {
+        // This activity is exported, so the intent may come from any app or web page. See
+        // LaunchIntentPolicy for what such an intent is allowed to do.
+        LaunchIntentPolicy.safeId(intent.getStringExtra(MessageNotifier.EXTRA_CONVERSATION))?.let {
             pendingConversation.value = it
         }
-        intent.getStringExtra(MessageNotifier.EXTRA_CALL_ID)?.takeIf { it.isNotBlank() }?.let {
+        LaunchIntentPolicy.safeId(intent.getStringExtra(MessageNotifier.EXTRA_CALL_ID))?.let {
+            val action = intent.getStringExtra(MessageNotifier.EXTRA_CALL_ACTION)
+            val trusted = LaunchIntentPolicy.mayAnswer(
+                action,
+                intent.getStringExtra(MessageNotifier.EXTRA_LAUNCH_TOKEN),
+                MessageNotifier.launchToken(this)
+            )
             pendingCallId.value = it
-            pendingCallAction.value = intent.getStringExtra(MessageNotifier.EXTRA_CALL_ACTION)
+            pendingCallAction.value = if (trusted) MessageNotifier.CALL_ACTION_ANSWER else MessageNotifier.CALL_ACTION_OPEN
         }
-        // Also support `offlinemesh://chat/<id>` and `offlinemesh://call/<id>` URI deep links
-        intent.data?.let { uri ->
-            if (uri.scheme == "offlinemesh") {
-                val target = uri.lastPathSegment ?: uri.getQueryParameter("id")
-                if (!target.isNullOrBlank()) {
-                    when (uri.host) {
-                        "chat" -> pendingConversation.value = target
-                        "call" -> pendingCallId.value = target
-                    }
-                }
+        // `offlinemesh://chat/<id>` and `offlinemesh://call/<id>` links only ever open a screen.
+        intent.data?.takeIf { it.isHierarchical }?.let { uri ->
+            val target = LaunchIntentPolicy.fromUri(
+                uri.scheme,
+                uri.host,
+                uri.lastPathSegment,
+                runCatching { uri.getQueryParameter("id") }.getOrNull()
+            )
+            target?.conversationId?.let { pendingConversation.value = it }
+            target?.callId?.let {
+                pendingCallId.value = it
+                pendingCallAction.value = MessageNotifier.CALL_ACTION_OPEN
             }
         }
     }

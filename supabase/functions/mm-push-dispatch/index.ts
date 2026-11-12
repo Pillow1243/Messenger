@@ -101,6 +101,16 @@ function lookupFailed(what: string, error: { code?: string; message?: string }) 
   return json(500, { error: "lookup_failed", what });
 }
 
+// PostgREST carries `in` filters in the URL. A channel can have thousands of subscribers, and a
+// single request for all of them is rejected for its length - which used to look like "nobody
+// to notify". Lists are therefore sent in slices.
+const IN_CHUNK = 150;
+function chunked<T>(items: T[], size = IN_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 function isWithinQuietHours(nowHourUtc: number, start: number | null, end: number | null): boolean {
   if (start === null || end === null || start === end) return false;
   if (start < end) return nowHourUtc >= start && nowHourUtc < end;
@@ -191,7 +201,7 @@ Deno.serve(async (req) => {
   if (eventKind === "message") {
     const { data: msg, error: msgErr } = await admin
       .from("mm_messages")
-      .select("id, sender_id, sent_at, deleted_at")
+      .select("id, sender_id, sent_at, deleted_at, expires_at")
       .eq("id", targetId)
       .eq("conversation_id", conversationId)
       .maybeSingle();
@@ -200,6 +210,10 @@ Deno.serve(async (req) => {
       return json(403, { error: "message_not_owned_by_caller" });
     }
     if (now.getTime() - new Date(msg.sent_at).getTime() > 10 * 60_000) {
+      return json(410, { error: "wakeup_expired" });
+    }
+    // A disappearing message that has already expired must not wake anybody up.
+    if (msg.expires_at && new Date(msg.expires_at).getTime() <= now.getTime()) {
       return json(410, { error: "wakeup_expired" });
     }
   } else {
@@ -218,15 +232,24 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Opportunistic expiration cleanup.
-  await admin.from("mm_push_log").delete().lt("expires_at", now.toISOString());
+  // Opportunistic expiration cleanup. Best effort: a failure here only delays the cleanup.
+  const { error: cleanupErr } = await admin
+    .from("mm_push_log")
+    .delete()
+    .lt("expires_at", now.toISOString());
+  if (cleanupErr) console.error("mm-push-dispatch: push log cleanup failed", cleanupErr.code ?? "unknown");
 
   // Fetch conversation recipients excluding sender & muted members.
-  const { data: members } = await admin
+  //
+  // From here on a failed lookup is never treated as an empty result. For the member, token and
+  // notification queries that would silently drop the push; for the block list and the
+  // notification preferences it would do worse and deliver a push the recipient has refused.
+  const { data: members, error: membersErr } = await admin
     .from("mm_conversation_members")
     .select("user_id, muted_until, notification_level")
     .eq("conversation_id", conversationId)
     .neq("user_id", callerId);
+  if (membersErr) return lookupFailed("members", membersErr);
 
   const candidateIds = (members || [])
     .filter((m) => {
@@ -241,10 +264,11 @@ Deno.serve(async (req) => {
   }
 
   // Exclude blocked relationships.
-  const { data: blocks } = await admin
+  const { data: blocks, error: blocksErr } = await admin
     .from("mm_blocks")
     .select("blocker_id, blocked_id")
     .or(`blocker_id.eq.${callerId},blocked_id.eq.${callerId}`);
+  if (blocksErr) return lookupFailed("blocks", blocksErr);
   const blockedUsers = new Set<string>();
   for (const b of blocks || []) {
     if (b.blocker_id === callerId) blockedUsers.add(b.blocked_id);
@@ -252,12 +276,15 @@ Deno.serve(async (req) => {
   }
 
   // Respect recipient notification preferences.
-  const { data: prefs } = await admin
-    .from("mm_notification_prefs")
-    .select("*")
-    .in("user_id", candidateIds);
   const prefMap = new Map<string, Record<string, unknown>>();
-  for (const p of prefs || []) prefMap.set(p.user_id, p);
+  for (const ids of chunked(candidateIds)) {
+    const { data: prefs, error: prefsErr } = await admin
+      .from("mm_notification_prefs")
+      .select("*")
+      .in("user_id", ids);
+    if (prefsErr) return lookupFailed("notification_prefs", prefsErr);
+    for (const p of prefs || []) prefMap.set(p.user_id, p);
+  }
 
   const nowHourUtc = now.getUTCHours();
   const eligibleUserIds = candidateIds.filter((uid) => {
@@ -293,8 +320,7 @@ Deno.serve(async (req) => {
       .from("mm_notifications")
       .select("user_id")
       .eq("message_id", targetId)
-      .eq("kind", "message")
-      .in("user_id", eligibleUserIds);
+      .eq("kind", "message");
     if (existingErr) return lookupFailed("notification", existingErr);
     const alreadyNotified = new Set((existing || []).map((n) => n.user_id as string));
     const notifRows = eligibleUserIds
@@ -312,16 +338,29 @@ Deno.serve(async (req) => {
   }
 
   // Fetch active tokens on non-revoked devices.
-  const { data: tokens } = await admin
-    .from("mm_push_tokens")
-    .select("id, user_id, device_id, provider, token, mm_devices!inner(id, revoked_at)")
-    .in("user_id", eligibleUserIds)
-    .is("revoked_at", null)
-    .gt("expires_at", now.toISOString());
+  type TokenRow = {
+    id: string;
+    user_id: string;
+    device_id: string;
+    provider: string;
+    token: string;
+    mm_devices: { id: string; revoked_at: string | null } | null;
+  };
+  const tokens: TokenRow[] = [];
+  for (const ids of chunked(eligibleUserIds)) {
+    const { data: page, error: tokensErr } = await admin
+      .from("mm_push_tokens")
+      .select("id, user_id, device_id, provider, token, mm_devices!inner(id, revoked_at)")
+      .in("user_id", ids)
+      .is("revoked_at", null)
+      .gt("expires_at", now.toISOString());
+    if (tokensErr) return lookupFailed("push_tokens", tokensErr);
+    tokens.push(...((page ?? []) as unknown as TokenRow[]));
+  }
 
-  const activeTokens = (tokens || []).filter((t: Record<string, unknown>) => {
-    const dev = t.mm_devices as { revoked_at: string | null } | null;
-    return dev && dev.revoked_at === null && t.provider === "fcm";
+  const activeTokens = tokens.filter((t) => {
+    const dev = t.mm_devices;
+    return !!dev && dev.revoked_at === null && t.provider === "fcm";
   });
 
   const fcmRaw = Deno.env.get("FCM_SERVICE_ACCOUNT_JSON");

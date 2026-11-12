@@ -431,20 +431,28 @@ class OnlineSync(
     }
 
     /** Hydrates encrypted content locally after a zero-plaintext FCM `mm_wakeup` arrives. */
-    suspend fun handlePushWakeup(wakeup: ValidatedPushWakeup) = withContext(Dispatchers.IO) {
-        val uid = currentUserId ?: return@withContext
+    /** Returns false when the wakeup could not be acted on and should be accepted again. */
+    suspend fun handlePushWakeup(wakeup: ValidatedPushWakeup): Boolean = withContext(Dispatchers.IO) {
+        val uid = currentUserId ?: return@withContext false
         when (wakeup.eventKind) {
             "call" -> {
-                val remoteCall = runCatching { api.callById(wakeup.targetId) }.getOrNull() ?: return@withContext
+                val remoteCall = runCatching { api.callById(wakeup.targetId) }.getOrNull()
+                    ?: return@withContext false
                 callManager?.onIncomingCallObserved(remoteCall)
+                true
             }
-            "message" -> {
+            "message" -> runCatching {
                 val localConvId = ensureLocalConversation(wakeup.conversationId)
-                val conv = conversationsDao.getById(localConvId) ?: return@withContext
+                val conv = conversationsDao.getById(localConvId) ?: return@runCatching false
                 backfill(conv, uid)
-            }
+                true
+            }.getOrDefault(false)
+            else -> false
         }
     }
+
+    /** Messages still waiting in the online outbox. */
+    suspend fun pendingOutboxCount(): Int = withContext(Dispatchers.IO) { outboxDao.count() }
 
     private suspend fun checkPendingIncomingCalls(myUid: String) {
         val active = runCatching { api.activeIncomingCalls(myUid) }.getOrDefault(emptyList())
@@ -1596,6 +1604,23 @@ class OnlineSync(
         refreshReactions(remoteId)
     }
 
+    /**
+     * Adds this account's [emoji] reaction, or removes it if it is already there. Whether it is
+     * there is read from the server: the local summary only holds counts per emoji, and going by
+     * those made it impossible to add a reaction somebody else had already used (the tap was
+     * taken for "remove mine", which removed nothing). Returns false when nothing was changed.
+     */
+    suspend fun toggleReaction(message: MessageEntity, emoji: String): Boolean = withContext(Dispatchers.IO) {
+        val userId = myUserId ?: return@withContext false
+        val remoteId = message.remoteId ?: return@withContext false
+        val changed = runCatching {
+            val mine = api.reactionsFor(listOf(remoteId)).any { it.userId == userId && it.emoji == emoji }
+            if (mine) api.removeReaction(remoteId, userId, emoji) else api.addReaction(remoteId, userId, emoji)
+        }.isSuccess
+        runCatching { refreshReactions(remoteId) }
+        changed
+    }
+
     private suspend fun refreshReactions(messageId: String) {
         val local = messagesDao.getByRemoteId(messageId) ?: return
         val reactions = api.reactionsFor(listOf(messageId))
@@ -1769,26 +1794,34 @@ class OnlineSync(
         Unit
     }
 
-    suspend fun leaveConversation(conversation: ConversationEntity) = withContext(Dispatchers.IO) {
-        val onlineId = conversation.onlineId ?: return@withContext
-        runCatching { api.leaveConversation(onlineId) }
-        conversationsDao.updateMembership(conversation.id, conversation.title, conversation.memberUserIds)
+    /** Returns false when the server did not confirm that this account left. */
+    suspend fun leaveConversation(conversation: ConversationEntity): Boolean = withContext(Dispatchers.IO) {
+        val onlineId = conversation.onlineId ?: return@withContext false
+        val left = runCatching { api.leaveConversation(onlineId) }
+        left.exceptionOrNull()?.let { Log.w(TAG, "Leave failed: ${reasonOf(it)}") }
+        left.isSuccess
     }
 
-    suspend fun editMessage(message: MessageEntity, conversation: ConversationEntity) =
+    /**
+     * Publishes an edit: the new text as an encrypted "text-edit" message, then the `edited_at`
+     * marker. Returns false when the edit did not reach the server, so the caller can keep the
+     * old text instead of showing something the other side never received.
+     */
+    suspend fun editMessage(message: MessageEntity, conversation: ConversationEntity): Boolean =
         withContext(Dispatchers.IO) {
-            val userId = myUserId ?: return@withContext
-            val onlineId = conversation.onlineId ?: return@withContext
-            val remoteId = message.remoteId ?: return@withContext
+            val userId = myUserId ?: return@withContext false
+            val onlineId = conversation.onlineId ?: return@withContext false
+            val remoteId = message.remoteId ?: return@withContext false
             val editedAt = message.editedAt ?: System.currentTimeMillis()
             val editMeta = buildJsonObject {
                 put("target", remoteId)
                 put("edited_at", editedAt)
             }
-            if (conversation.type == ConversationType.GROUP && conversation.encryptionVersion >= 2) {
-                val distUuid = conversation.distributionId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                    ?: UUID.randomUUID()
-                runCatching {
+            val published = runCatching {
+                if (conversation.type == ConversationType.GROUP && conversation.encryptionVersion >= 2) {
+                    val distUuid = conversation.distributionId
+                        ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        ?: error("no sender-key distribution for this group")
                     val cipher = crypto.encryptGroup(
                         settings.deviceId(),
                         distUuid,
@@ -1806,38 +1839,49 @@ class OnlineSync(
                         groupCipherEpoch = conversation.senderKeyEpoch,
                         groupDistributionId = distUuid.toString()
                     )
-                    api.markMessageEdited(remoteId, onlineId, editedAt)
+                } else {
+                    val envelopes = envelopesFor(conversation, userId, OnlinePayloadCodec.encodeText(message.body))
+                    check(envelopes.isNotEmpty()) { "no recipient devices" }
+                    val row = api.uploadMessage(
+                        senderUserId = userId,
+                        senderDeviceId = settings.deviceId(),
+                        conversationId = onlineId,
+                        clientMsgId = "$remoteId:edit:$editedAt",
+                        kind = "text-edit",
+                        meta = editMeta,
+                        senderDeviceRowId = deviceRowId
+                    )
+                    api.putEnvelopes(envelopes.map { it.copy(messageId = row.id) })
                 }
-                return@withContext
             }
-            val envelopes = runCatching {
-                envelopesFor(conversation, userId, OnlinePayloadCodec.encodeText(message.body))
-            }.getOrDefault(emptyList())
-            if (envelopes.isEmpty()) return@withContext
-            val row = runCatching {
-                api.uploadMessage(
-                    senderUserId = userId,
-                    senderDeviceId = settings.deviceId(),
-                    conversationId = onlineId,
-                    clientMsgId = "$remoteId:edit:$editedAt",
-                    kind = "text-edit",
-                    meta = editMeta,
-                    senderDeviceRowId = deviceRowId
-                )
-            }.getOrNull() ?: return@withContext
-            runCatching { api.putEnvelopes(envelopes.map { it.copy(messageId = row.id) }) }
+            if (published.isFailure) {
+                Log.w(TAG, "Edit not published: ${reasonOf(published.exceptionOrNull() ?: return@withContext false)}")
+                return@withContext false
+            }
+            // The marker only drives the "edited" label on other devices; the text is already out.
             runCatching { api.markMessageEdited(remoteId, onlineId, editedAt) }
+                .onFailure { Log.w(TAG, "Edit marker not stored: ${reasonOf(it)}") }
+            true
         }
 
-    suspend fun deleteForEveryone(message: MessageEntity, conversation: ConversationEntity) =
+    /**
+     * Deletes a message for every participant. Returns false when the server did not accept the
+     * deletion; the stored blob is only removed after the message row is marked deleted.
+     */
+    suspend fun deleteForEveryone(message: MessageEntity, conversation: ConversationEntity): Boolean =
         withContext(Dispatchers.IO) {
-            val onlineId = conversation.onlineId ?: return@withContext
-            val remoteId = message.remoteId ?: return@withContext
-            runCatching { api.deleteMessageForEveryone(remoteId, onlineId) }
+            val onlineId = conversation.onlineId ?: return@withContext false
+            val remoteId = message.remoteId ?: return@withContext false
+            val deleted = runCatching { api.deleteMessageForEveryone(remoteId, onlineId) }
+            if (deleted.getOrNull() != true) {
+                Log.w(TAG, "Delete not accepted: ${deleted.exceptionOrNull()?.let { reasonOf(it) } ?: "no row changed"}")
+                return@withContext false
+            }
             val objectPath = message.remoteObjectPath
             if (!objectPath.isNullOrBlank()) {
                 runCatching { api.deleteEncryptedBlob(objectPath, message.attachmentRemoteId) }
             }
+            true
         }
 
     private suspend fun markFailed(messageId: String, reason: String) {

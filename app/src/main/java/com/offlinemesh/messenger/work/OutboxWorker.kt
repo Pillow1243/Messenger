@@ -25,7 +25,14 @@ class OutboxWorker(appContext: Context, params: WorkerParameters) : CoroutineWor
         if (!app.online.isSignedIn) return Result.success()
         return try {
             app.online.drainOutbox()
-            Result.success()
+            // drainOutbox() does not throw when a message could not be delivered; it leaves the
+            // entry for later. Reporting success here ended the work, and after the process was
+            // killed nothing sent the rest until the periodic sync, up to 15 minutes later.
+            if (app.online.pendingOutboxCount() > 0 && runAttemptCount < MAX_ATTEMPTS) {
+                Result.retry()
+            } else {
+                Result.success()
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Outbox drain failed", e)
             if (runAttemptCount >= MAX_ATTEMPTS) Result.success() else Result.retry()

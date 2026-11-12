@@ -70,7 +70,7 @@ class MeshManager(
     private val settings: SettingsRepository,
     private val crypto: CryptoManager,
     private val seenPacketDao: SeenPacketDao? = null
-) {
+) : MeshLink {
 
     interface PacketHandler {
         /** A link is up and the peer's pre-key bundle has been processed. */
@@ -82,10 +82,19 @@ class MeshManager(
         /** A packet we are relaying for someone else; persist it for store-and-forward. */
         suspend fun onRelay(header: PacketHeader, body: ByteArray)
 
-        /** A delivery receipt from a peer. */
-        suspend fun onAck(header: PacketHeader)
+        /**
+         * A delivery receipt addressed to this device. [body] is Signal ciphertext: what is being
+         * acknowledged is only known, and only believed, after it decrypts.
+         */
+        suspend fun onAck(header: PacketHeader, body: ByteArray)
+
+        /** A packet addressed to this device that was already seen once (a retransmission). */
+        suspend fun onDuplicate(header: PacketHeader, body: ByteArray) {}
 
         suspend fun onPeerGone(deviceId: String)
+
+        /** Called every [WATCHDOG_INTERVAL_MS] while at least one peer is connected. */
+        suspend fun onTick() {}
     }
 
     private val client: ConnectionsClient = Nearby.getConnectionsClient(context)
@@ -100,10 +109,10 @@ class MeshManager(
     private val retryState = ConcurrentHashMap<String, Long>()         // endpointId -> next attempt
 
     private val _peerFlow = MutableStateFlow<List<PeerInfo>>(emptyList())
-    val peerFlow: StateFlow<List<PeerInfo>> = _peerFlow.asStateFlow()
+    override val peerFlow: StateFlow<List<PeerInfo>> = _peerFlow.asStateFlow()
 
     private val _running = MutableStateFlow(false)
-    val running: StateFlow<Boolean> = _running.asStateFlow()
+    override val running: StateFlow<Boolean> = _running.asStateFlow()
 
     @Volatile private var handler: PacketHandler? = null
     @Volatile private var advertising = false
@@ -149,7 +158,7 @@ class MeshManager(
         Unit
     }
 
-    fun deviceId(): String = myDeviceId
+    override fun deviceId(): String = myDeviceId
 
     // --------------------------------------------------------------- lifecycle
 
@@ -273,6 +282,9 @@ class MeshManager(
             // Rebuild HELLO material periodically: pre-keys get consumed as peers connect.
             runCatching { refreshIdentity() }
             runCatching { seenPacketDao?.deleteOlderThan(now - RoutingPolicy.PACKET_TTL_MS) }
+            // Unacknowledged packets are repeated from here; without this pass a packet written
+            // to a link that dropped a moment later would wait for the next app start.
+            if (peers.isNotEmpty()) runCatching { handler?.onTick() }
         }
     }
 
@@ -366,29 +378,32 @@ class MeshManager(
         val header = packet.header
         val now = System.currentTimeMillis()
 
-        if (!RoutingPolicy.isUsable(header, now)) return
-        if (RoutingPolicy.isFromSelf(header, myDeviceId)) return
-        if (!seen.markSeen(header.packetId, now)) return
-        val duplicateInDb = seenPacketDao?.let { dao ->
-            runCatching {
-                dao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
-            }.getOrDefault(1L) == -1L
-        } ?: false
-        if (duplicateInDb) return
+        if (!FrameRouting.acceptable(header, myDeviceId, now)) return
+        val duplicate = !seen.markSeen(header.packetId, now) || (
+            seenPacketDao?.let { dao ->
+                runCatching {
+                    dao.insertIfAbsent(SeenPacketEntity(header.packetId, now))
+                }.getOrDefault(1L) == -1L
+            } ?: false
+            )
 
-        when (header.type) {
-            PacketType.HELLO -> handleHello(endpointId, packet.body)
-            PacketType.ACK -> if (header.to == myDeviceId) handler?.onAck(header)
-            else -> {
-                if (RoutingPolicy.isForMe(header, myDeviceId)) {
-                    handler?.onPacket(header, packet.body)
-                }
-                if (RoutingPolicy.shouldForward(header, myDeviceId, now)) {
-                    handler?.onRelay(header, packet.body)
-                    broadcast(RoutingPolicy.forwarded(header), packet.body, exceptEndpointId = endpointId)
-                }
+        when (FrameRouting.decide(header, myDeviceId, now, duplicate)) {
+            FrameAction.DROP -> Unit
+            FrameAction.HELLO -> handleHello(endpointId, packet.body)
+            FrameAction.ACK_FOR_ME -> handler?.onAck(header, packet.body)
+            FrameAction.DUPLICATE_FOR_ME -> handler?.onDuplicate(header, packet.body)
+            FrameAction.DELIVER -> handler?.onPacket(header, packet.body)
+            FrameAction.RELAY -> relay(endpointId, header, packet.body)
+            FrameAction.DELIVER_AND_RELAY -> {
+                handler?.onPacket(header, packet.body)
+                relay(endpointId, header, packet.body)
             }
         }
+    }
+
+    private suspend fun relay(fromEndpointId: String, header: PacketHeader, body: ByteArray) {
+        handler?.onRelay(header, body)
+        broadcast(RoutingPolicy.forwarded(header), body, exceptEndpointId = fromEndpointId)
     }
 
     private suspend fun handleHello(endpointId: String, body: ByteArray) {
@@ -404,19 +419,24 @@ class MeshManager(
             return
         }
 
-        // A device may reconnect with a new endpoint id; keep a single mapping per device.
-        peers[endpointId] = PeerInfo(endpointId, hello.deviceId, hello.name, System.currentTimeMillis())
-        endpointByDevice[hello.deviceId] = endpointId
-        publishPeers()
-
+        // The bundle is checked before the device id is bound to this link. A HELLO is not signed,
+        // so the id in it is only a claim; an endpoint that presents a different identity key for
+        // a device we already know must not take over that device's route (it would receive -
+        // and could silently discard - everything queued for the real one).
         try {
             val bundle = Base64.decode(hello.bundle, Base64.NO_WRAP)
             crypto.processPeerBundle(hello.deviceId, bundle)
         } catch (e: IdentityChangedException) {
-            Log.w(TAG, "Identity changed for ${hello.deviceId}")
+            Log.w(TAG, "Identity changed for ${hello.deviceId}; link not trusted")
+            return
         } catch (e: Exception) {
             Log.e(TAG, "Could not process pre-key bundle from ${hello.deviceId}", e)
         }
+
+        // A device may reconnect with a new endpoint id; keep a single mapping per device.
+        peers[endpointId] = PeerInfo(endpointId, hello.deviceId, hello.name, System.currentTimeMillis())
+        endpointByDevice[hello.deviceId] = endpointId
+        publishPeers()
 
         handler?.onPeerReady(peers[endpointId] ?: return)
     }
@@ -449,12 +469,12 @@ class MeshManager(
     }
 
     /** @return true when the payload left the device. */
-    fun sendTo(deviceId: String, header: PacketHeader, body: ByteArray): Boolean {
+    override fun sendTo(deviceId: String, header: PacketHeader, body: ByteArray): Boolean {
         val endpointId = endpointByDevice[deviceId] ?: return false
         return sendFrame(endpointId, header, body)
     }
 
-    fun broadcast(header: PacketHeader, body: ByteArray, exceptEndpointId: String? = null): Int {
+    override fun broadcast(header: PacketHeader, body: ByteArray, exceptEndpointId: String?): Int {
         var sent = 0
         for (endpointId in peers.keys) {
             if (endpointId == exceptEndpointId) continue
@@ -485,9 +505,9 @@ class MeshManager(
         }
     }
 
-    fun isConnected(deviceId: String): Boolean = endpointByDevice.containsKey(deviceId)
+    override fun isConnected(deviceId: String): Boolean = endpointByDevice.containsKey(deviceId)
 
-    fun connectedDeviceIds(): Set<String> = endpointByDevice.keys.toSet()
+    override fun connectedDeviceIds(): Set<String> = endpointByDevice.keys.toSet()
 
     fun disconnect(deviceId: String) {
         val endpointId = endpointByDevice[deviceId] ?: return
