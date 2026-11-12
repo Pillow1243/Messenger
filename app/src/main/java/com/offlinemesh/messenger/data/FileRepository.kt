@@ -19,7 +19,14 @@ import java.util.UUID
  * in the app's private directory; the plaintext staging area is the cache directory, which is
  * wiped as soon as a transfer completes.
  */
-class FileRepository(private val context: Context, private val vault: FileVault = FileVault()) {
+class FileRepository(
+    private val context: Context,
+    private val vault: FileVault = FileVault(),
+    /** Root for every directory below, instead of the app's files/cache directories (tests). */
+    baseDir: File? = null
+) {
+    private val filesRoot: File = baseDir?.let { File(it, "files") } ?: context.filesDir
+    private val cacheRoot: File = baseDir?.let { File(it, "cache") } ?: context.cacheDir
 
     data class StoredAttachment(val file: File, val name: String, val size: Long)
 
@@ -29,12 +36,12 @@ class FileRepository(private val context: Context, private val vault: FileVault 
         val plainSha256Hex: String
     )
 
-    private fun attachmentsDir(): File = File(context.filesDir, "attachments").apply { mkdirs() }
-    private fun stagingDir(): File = File(context.cacheDir, "staging").apply { mkdirs() }
-    fun shareDir(): File = File(context.cacheDir, "share").apply { mkdirs() }
-    private fun encUploadDir(): File = File(context.cacheDir, "encrypted_uploads").apply { mkdirs() }
-    private fun encDownloadDir(): File = File(context.cacheDir, "encrypted_downloads").apply { mkdirs() }
-    private fun plainStagingDir(): File = File(context.cacheDir, "plain_staging").apply { mkdirs() }
+    private fun attachmentsDir(): File = File(filesRoot, "attachments").apply { mkdirs() }
+    private fun stagingDir(): File = File(cacheRoot, "staging").apply { mkdirs() }
+    fun shareDir(): File = File(cacheRoot, "share").apply { mkdirs() }
+    private fun encUploadDir(): File = File(cacheRoot, "encrypted_uploads").apply { mkdirs() }
+    private fun encDownloadDir(): File = File(cacheRoot, "encrypted_downloads").apply { mkdirs() }
+    private fun plainStagingDir(): File = File(cacheRoot, "plain_staging").apply { mkdirs() }
     private fun voiceFile(id: String): File = File(attachmentsDir(), "voice_$id.enc")
     private fun attachmentFile(id: String): File = File(attachmentsDir(), "file_$id.enc")
 

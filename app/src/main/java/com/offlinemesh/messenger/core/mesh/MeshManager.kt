@@ -70,7 +70,7 @@ class MeshManager(
     private val settings: SettingsRepository,
     private val crypto: CryptoManager,
     private val seenPacketDao: SeenPacketDao? = null
-) {
+) : MeshLink {
 
     interface PacketHandler {
         /** A link is up and the peer's pre-key bundle has been processed. */
@@ -109,10 +109,10 @@ class MeshManager(
     private val retryState = ConcurrentHashMap<String, Long>()         // endpointId -> next attempt
 
     private val _peerFlow = MutableStateFlow<List<PeerInfo>>(emptyList())
-    val peerFlow: StateFlow<List<PeerInfo>> = _peerFlow.asStateFlow()
+    override val peerFlow: StateFlow<List<PeerInfo>> = _peerFlow.asStateFlow()
 
     private val _running = MutableStateFlow(false)
-    val running: StateFlow<Boolean> = _running.asStateFlow()
+    override val running: StateFlow<Boolean> = _running.asStateFlow()
 
     @Volatile private var handler: PacketHandler? = null
     @Volatile private var advertising = false
@@ -158,7 +158,7 @@ class MeshManager(
         Unit
     }
 
-    fun deviceId(): String = myDeviceId
+    override fun deviceId(): String = myDeviceId
 
     // --------------------------------------------------------------- lifecycle
 
@@ -378,8 +378,7 @@ class MeshManager(
         val header = packet.header
         val now = System.currentTimeMillis()
 
-        if (!RoutingPolicy.isUsable(header, now)) return
-        if (RoutingPolicy.isFromSelf(header, myDeviceId)) return
+        if (!FrameRouting.acceptable(header, myDeviceId, now)) return
         val duplicate = !seen.markSeen(header.packetId, now) || (
             seenPacketDao?.let { dao ->
                 runCatching {
@@ -387,36 +386,24 @@ class MeshManager(
                 }.getOrDefault(1L) == -1L
             } ?: false
             )
-        if (duplicate) {
-            // A copy of something already seen is never forwarded again. When it is addressed to
-            // this device it is still shown to the handler: the sender repeats a packet until it
-            // is acknowledged, so a repeat usually means the acknowledgement was lost.
-            if (header.to == myDeviceId && header.type in RETRANSMITTED_TYPES) {
-                handler?.onDuplicate(header, packet.body)
-            }
-            return
-        }
 
-        when (header.type) {
-            PacketType.HELLO -> handleHello(endpointId, packet.body)
-            PacketType.ACK -> if (header.to == myDeviceId) {
-                handler?.onAck(header, packet.body)
-            } else if (RoutingPolicy.shouldForward(header, myDeviceId, now)) {
-                // Somebody else's acknowledgement: carry it like any other packet, otherwise a
-                // message that needed a relay could never be confirmed.
-                handler?.onRelay(header, packet.body)
-                broadcast(RoutingPolicy.forwarded(header), packet.body, exceptEndpointId = endpointId)
-            }
-            else -> {
-                if (RoutingPolicy.isForMe(header, myDeviceId)) {
-                    handler?.onPacket(header, packet.body)
-                }
-                if (RoutingPolicy.shouldForward(header, myDeviceId, now)) {
-                    handler?.onRelay(header, packet.body)
-                    broadcast(RoutingPolicy.forwarded(header), packet.body, exceptEndpointId = endpointId)
-                }
+        when (FrameRouting.decide(header, myDeviceId, now, duplicate)) {
+            FrameAction.DROP -> Unit
+            FrameAction.HELLO -> handleHello(endpointId, packet.body)
+            FrameAction.ACK_FOR_ME -> handler?.onAck(header, packet.body)
+            FrameAction.DUPLICATE_FOR_ME -> handler?.onDuplicate(header, packet.body)
+            FrameAction.DELIVER -> handler?.onPacket(header, packet.body)
+            FrameAction.RELAY -> relay(endpointId, header, packet.body)
+            FrameAction.DELIVER_AND_RELAY -> {
+                handler?.onPacket(header, packet.body)
+                relay(endpointId, header, packet.body)
             }
         }
+    }
+
+    private suspend fun relay(fromEndpointId: String, header: PacketHeader, body: ByteArray) {
+        handler?.onRelay(header, body)
+        broadcast(RoutingPolicy.forwarded(header), body, exceptEndpointId = fromEndpointId)
     }
 
     private suspend fun handleHello(endpointId: String, body: ByteArray) {
@@ -482,12 +469,12 @@ class MeshManager(
     }
 
     /** @return true when the payload left the device. */
-    fun sendTo(deviceId: String, header: PacketHeader, body: ByteArray): Boolean {
+    override fun sendTo(deviceId: String, header: PacketHeader, body: ByteArray): Boolean {
         val endpointId = endpointByDevice[deviceId] ?: return false
         return sendFrame(endpointId, header, body)
     }
 
-    fun broadcast(header: PacketHeader, body: ByteArray, exceptEndpointId: String? = null): Int {
+    override fun broadcast(header: PacketHeader, body: ByteArray, exceptEndpointId: String?): Int {
         var sent = 0
         for (endpointId in peers.keys) {
             if (endpointId == exceptEndpointId) continue
@@ -518,9 +505,9 @@ class MeshManager(
         }
     }
 
-    fun isConnected(deviceId: String): Boolean = endpointByDevice.containsKey(deviceId)
+    override fun isConnected(deviceId: String): Boolean = endpointByDevice.containsKey(deviceId)
 
-    fun connectedDeviceIds(): Set<String> = endpointByDevice.keys.toSet()
+    override fun connectedDeviceIds(): Set<String> = endpointByDevice.keys.toSet()
 
     fun disconnect(deviceId: String) {
         val endpointId = endpointByDevice[deviceId] ?: return
@@ -545,8 +532,5 @@ class MeshManager(
         const val SERVICE_ID = "com.offlinemesh.mesh.v1"
         const val WATCHDOG_INTERVAL_MS = 15_000L
         const val RECONNECT_INTERVAL_MS = 20_000L
-
-        /** Packet types a sender repeats until they are acknowledged. */
-        val RETRANSMITTED_TYPES = setOf(PacketType.TEXT, PacketType.VOICE, PacketType.FILE_CHUNK)
     }
 }

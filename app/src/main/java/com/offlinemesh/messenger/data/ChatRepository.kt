@@ -18,6 +18,7 @@ import com.offlinemesh.messenger.core.db.RelayEntity
 import com.offlinemesh.messenger.core.media.MediaMetadataHelper
 import com.offlinemesh.messenger.core.mesh.FileChunker
 import com.offlinemesh.messenger.core.mesh.MeshInboundPolicy
+import com.offlinemesh.messenger.core.mesh.MeshLink
 import com.offlinemesh.messenger.core.mesh.MeshManager
 import com.offlinemesh.messenger.core.mesh.PacketCodec
 import com.offlinemesh.messenger.core.mesh.PacketHeader
@@ -93,7 +94,7 @@ data class FileChunkMeta(
 class ChatRepository(
     private val db: AppDatabase,
     private val crypto: CryptoManager,
-    private val mesh: MeshManager,
+    private val mesh: MeshLink,
     private val files: FileRepository,
     private val settings: SettingsRepository,
     private val contacts: ContactRepository,

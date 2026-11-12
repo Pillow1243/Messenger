@@ -431,20 +431,28 @@ class OnlineSync(
     }
 
     /** Hydrates encrypted content locally after a zero-plaintext FCM `mm_wakeup` arrives. */
-    suspend fun handlePushWakeup(wakeup: ValidatedPushWakeup) = withContext(Dispatchers.IO) {
-        val uid = currentUserId ?: return@withContext
+    /** Returns false when the wakeup could not be acted on and should be accepted again. */
+    suspend fun handlePushWakeup(wakeup: ValidatedPushWakeup): Boolean = withContext(Dispatchers.IO) {
+        val uid = currentUserId ?: return@withContext false
         when (wakeup.eventKind) {
             "call" -> {
-                val remoteCall = runCatching { api.callById(wakeup.targetId) }.getOrNull() ?: return@withContext
+                val remoteCall = runCatching { api.callById(wakeup.targetId) }.getOrNull()
+                    ?: return@withContext false
                 callManager?.onIncomingCallObserved(remoteCall)
+                true
             }
-            "message" -> {
+            "message" -> runCatching {
                 val localConvId = ensureLocalConversation(wakeup.conversationId)
-                val conv = conversationsDao.getById(localConvId) ?: return@withContext
+                val conv = conversationsDao.getById(localConvId) ?: return@runCatching false
                 backfill(conv, uid)
-            }
+                true
+            }.getOrDefault(false)
+            else -> false
         }
     }
+
+    /** Messages still waiting in the online outbox. */
+    suspend fun pendingOutboxCount(): Int = withContext(Dispatchers.IO) { outboxDao.count() }
 
     private suspend fun checkPendingIncomingCalls(myUid: String) {
         val active = runCatching { api.activeIncomingCalls(myUid) }.getOrDefault(emptyList())

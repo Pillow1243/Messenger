@@ -28,7 +28,8 @@ class MessengerFirebaseMessagingService : FirebaseMessagingService() {
         val validated = wakeupPolicy.acceptOrNull(message.data) ?: return
         val app = applicationContext as? MessengerApp ?: return
         app.appScope.launch {
-            app.online.handlePushWakeup(validated)
+            val handled = runCatching { app.online.handlePushWakeup(validated) }.getOrDefault(false)
+            if (!handled) wakeupPolicy.forget(validated.dedupKey)
         }
     }
 }
