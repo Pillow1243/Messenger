@@ -61,6 +61,13 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
+ * Signal kind that tells the peer the call is over. It is the only kind the backend accepts for a
+ * call that already reached a terminal state (`mm_call_signals_kind_check`, `mm_send_call_signal`).
+ * Older builds sent "hangup", which the database rejected; it is still understood when received.
+ */
+private const val SIGNAL_BYE = "bye"
+
+/**
  * Production 1:1 WebRTC Voice & Video Calling coordinator backed by `org.webrtc.*` and
  * authenticated Supabase signaling (`mm_calls` + `mm_call_signals` + `mm-turn-credentials`).
  *
@@ -337,7 +344,7 @@ class WebRtcCallManager(
                 online.sendCallSignal(
                     callId = callId,
                     toUserId = peerId,
-                    kind = "hangup",
+                    kind = SIGNAL_BYE,
                     payload = buildJsonObject { put("reason", "declined") }
                 )
             }
@@ -441,7 +448,7 @@ class WebRtcCallManager(
                 }
             }
             "ice" -> applyRemoteIcePayload(signal.payload)
-            "hangup", "bye" -> {
+            "hangup", SIGNAL_BYE -> {
                 val reason = signal.payload.strField("reason") ?: "ended"
                 finishCallInternal(reason, notifyRemote = false)
             }
@@ -523,7 +530,7 @@ class WebRtcCallManager(
                         online.sendCallSignal(
                             callId = previous.callId,
                             toUserId = previous.peerUserId,
-                            kind = "hangup",
+                            kind = SIGNAL_BYE,
                             payload = buildJsonObject { put("reason", reason) }
                         )
                     }

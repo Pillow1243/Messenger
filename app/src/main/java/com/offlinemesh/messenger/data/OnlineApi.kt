@@ -643,7 +643,14 @@ class OnlineApi(
                 put("ciphertext", envelope.ciphertextBase64)
             }
         }
-        rest.insert("mm_message_envelopes", rows, onConflict = "message_id,recipient_device")
+        // First write wins. Envelopes are immutable on the server (there is no UPDATE grant), so a
+        // retried fan-out must be a no-op rather than a merge that the database refuses.
+        rest.insert(
+            "mm_message_envelopes",
+            rows,
+            onConflict = "message_id,recipient_device",
+            ignoreDuplicates = true
+        )
     }
 
     suspend fun envelopesFor(messageIds: List<String>, recipientUserId: String): List<RemoteEnvelope> {
@@ -695,7 +702,10 @@ class OnlineApi(
         rest.insert(
             "mm_sender_key_distributions",
             rows,
-            onConflict = "conversation_id,epoch,sender_device,recipient_device"
+            onConflict = "conversation_id,epoch,sender_device,recipient_device",
+            // An undelivered distribution for the same epoch still opens the chain (the receiver
+            // ratchets forward), and the row is immutable server-side, so retries are no-ops.
+            ignoreDuplicates = true
         )
     }
 
@@ -760,7 +770,9 @@ class OnlineApi(
                     put("sha256", cipherSha256)
                 }
             ),
-            onConflict = "id"
+            onConflict = "id",
+            // Attachment rows are immutable; a resumed upload re-registers the same id.
+            ignoreDuplicates = true
         )
         return (rows.firstOrNull() as? JsonObject)?.str("id") ?: attachmentId
     }
@@ -1171,19 +1183,21 @@ class OnlineApi(
         }
     }
 
-    suspend fun editMessage(
+    /**
+     * Flags a message as edited. The new text never goes through this call: it is published as an
+     * end-to-end encrypted "text-edit" message that references [messageId].
+     */
+    suspend fun markMessageEdited(
         messageId: String,
         conversationId: String,
-        body: String,
         editedAtMs: Long
     ) {
         rest.patch(
             "mm_messages",
             listOf("id" to "eq.$messageId", "conversation_id" to "eq.$conversationId"),
-            buildJsonObject {
-                put("edited_at", Instant.ofEpochMilli(editedAtMs).toString())
-                put("kind", "text-edited")
-            }
+            // Only the marker is writable: `kind` and every other column of a stored message are
+            // immutable for clients. The new text travels as an encrypted "text-edit" message.
+            buildJsonObject { put("edited_at", Instant.ofEpochMilli(editedAtMs).toString()) }
         )
     }
 
