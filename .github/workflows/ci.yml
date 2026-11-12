@@ -66,6 +66,11 @@ jobs:
       - name: Third-party licence inventory
         run: python3 tools/license_inventory.py
 
+      # The APK ships THIRD_PARTY_NOTICES.md so attribution is reachable from inside the app;
+      # this fails if the generated asset and the repository notices file have drifted apart.
+      - name: In-app licence asset is current
+        run: python3 tools/build_licence_asset.py --check
+
       # Gradle's own log is only reachable through the artifact blob, which some CI
       # environments cannot fetch. Re-emitting the compiler/lint errors as workflow
       # annotations makes the failure readable directly from the check run.
@@ -219,7 +224,7 @@ jobs:
       # These tests cover what JVM tests cannot: SQLCipher's native library, the real Keystore
       # wrap, and the on-disk encryption property (no SQLite header, no plaintext canary).
       - name: Run on-device tests
-        uses: reactivecircus/android-emulator-runner@31f424d05a8bea0229d0feab746260472ef8e34d # v2.9.0
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 30
           target: google_apis
@@ -234,6 +239,29 @@ jobs:
                   while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done
                 exit 1
               }
+
+      # The emulator action reports failures only in its own log, which is not reachable from
+      # every environment. Re-emitting the JUnit results as annotations makes the outcome readable
+      # from the checks API, and a missing report becomes an explicit failure instead of a silent
+      # "no artifacts" warning.
+      - name: Summarise instrumentation results
+        if: always()
+        run: |
+          shopt -s nullglob globstar
+          results=(app/build/outputs/androidTest-results/**/*.xml)
+          if [ ${#results[@]} -eq 0 ]; then
+            echo "::error title=Instrumentation::no JUnit result files were produced; the emulator or the test run failed before reporting"
+            exit 1
+          fi
+          sum_attr() { grep -ho "$1=\"[0-9]*\"" "${results[@]}" | grep -o '[0-9]*' | awk '{s+=$1} END {print s+0}'; }
+          failures=$(sum_attr failures)
+          tests=$(sum_attr tests)
+          echo "instrumentation: ${tests} tests, ${failures} failures/errors"
+          if [ "${failures:-1}" -gt 0 ] || [ "${tests:-0}" -eq 0 ]; then
+            grep -h -A3 '<failure\|<error' "${results[@]}" | head -40 |
+              while IFS= read -r line; do echo "::error title=Instrumentation::${line}"; done
+            exit 1
+          fi
 
       - name: Upload instrumentation reports
         if: always()

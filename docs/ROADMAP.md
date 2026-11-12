@@ -67,7 +67,7 @@ Status legend: **Done** (shipped and verified) · **Partial** (works, needs the 
 | Release pipeline with real signing, checksums, provenance | Done (needs the owner's keystore) |
 | Third-party notices + AGPL analysis | Done (`THIRD_PARTY_NOTICES.md`) |
 | Licence decision for the repository | **Blocked — owner decision** |
-| In-app "Licences" / attribution screen (SQLCipher BSD notice, AGPL offer) | Todo — required before public distribution |
+| In-app "Licences" / attribution screen (SQLCipher BSD notice, AGPL offer) | Done — Settings → About → Open-source licences; asset generated from `THIRD_PARTY_NOTICES.md`, drift gated in CI |
 | In-app update check | Todo |
 
 ## Deliberately not planned

@@ -43,6 +43,7 @@ import com.offlinemesh.messenger.presentation.screens.ContactsScreen
 import com.offlinemesh.messenger.presentation.screens.NearbyScreen
 import com.offlinemesh.messenger.presentation.screens.OnboardingScreen
 import com.offlinemesh.messenger.presentation.screens.SearchScreen
+import com.offlinemesh.messenger.presentation.screens.LicencesScreen
 import com.offlinemesh.messenger.presentation.screens.SettingsScreen
 import java.util.Base64
 
@@ -59,6 +60,7 @@ object Routes {
     const val SAVED = "saved"
     const val CHANNELS = "channels"
     const val ACCOUNT = "account"
+    const val LICENCES = "licences"
     const val ARG_CONVERSATION = "conversationId"
     const val ARG_DEVICE = "deviceId"
 
@@ -192,6 +194,9 @@ fun NavGraph(
                 )
             }
 
+            composable(Routes.LICENCES) {
+                LicencesScreen(onBack = { navController.popBackStack() })
+            }
             composable(Routes.ACCOUNT) {
                 AccountScreen(vm = vm, onBack = { navController.popBackStack() })
             }
@@ -242,7 +247,8 @@ fun NavGraph(
             composable(Routes.SETTINGS) {
                 SettingsScreen(
                     vm = vm,
-                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) }
+                    onOpenAccount = { navController.navigate(Routes.ACCOUNT) },
+                    onOpenLicences = { navController.navigate(Routes.LICENCES) }
                 )
             }
         }

@@ -286,4 +286,7 @@
     <string name="saved_empty_body">Star a message to keep it here. Saved messages never leave this device.</string>
     <string name="saved_remove">Remove</string>
     <string name="saved_media_placeholder">Attachment</string>
+    <string name="licences_title">Open-source licences</string>
+    <string name="licences_settings_subtitle">Third-party notices shipped in this build</string>
+    <string name="licences_loading">Loading notices…</string>
 </resources>

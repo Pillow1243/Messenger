@@ -49,7 +49,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions refer
 * `tools/check_string_parity.sh` (English/Persian keys must match), `tools/license_inventory.py`
   (every declared dependency must be listed in the notices), `THIRD_PARTY_NOTICES.md`,
   `docs/RELEASE.md`, `docs/ROADMAP.md`, this changelog.
-* 16 new UI strings in English and Persian.
+* **In-app open-source licences screen** — Settings → About → *Open-source licences* renders the
+  third-party notices that ship in the build. The asset is generated from `THIRD_PARTY_NOTICES.md`
+  by `tools/build_licence_asset.py`, and CI fails if the two drift, so the attribution a user can
+  read is always the inventory of the build they are running (SQLCipher's BSD notice included).
+* 19 new UI strings in English and Persian.
 
 ### Changed
 
