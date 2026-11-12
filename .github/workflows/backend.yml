@@ -3,8 +3,10 @@ name: Backend
 # Verifies the parts of the product that do not need an Android device:
 #
 #   * every `supabase/migrations/*.sql` file applies to a clean PostgreSQL database,
-#   * both authorisation suites (RLS matrix + social-graph hardening) pass under real
+#   * every authorisation suite in `supabase/tests/*.sql` (RLS matrix, social-graph hardening,
+#     write-path hardening) passes under real
 #     `anon` / `authenticated` / `service_role` role impersonation,
+#   * the Edge Functions only name tables, columns and RPC arguments that exist in that schema,
 #   * migrations are idempotent (they are also applied twice),
 #   * the Edge Functions type-check and lint under Deno,
 #   * no private key, service-role JWT or keystore material is committed.
@@ -64,7 +66,7 @@ jobs:
           fi
           psql --version
 
-      - name: Apply stub, migrations and both suites
+      - name: Apply stub, migrations and every suite
         run: |
           set -o pipefail
           if ! ./supabase/tests/local/run.sh 2>&1 | tee backend.log; then

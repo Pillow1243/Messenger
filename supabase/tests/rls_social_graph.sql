@@ -46,7 +46,7 @@ begin
      and c.relname like 'mm\_%' escape '\'
      and not exists (select 1 from pg_policies p
                       where p.schemaname = 'public' and p.tablename = c.relname)
-     and c.relname not in ('mm_rate_limits', 'mm_push_log');
+     and c.relname not in ('mm_rate_limits', 'mm_push_log', 'mm_device_prekeys', 'mm_revoked_sessions');
   assert v_count = 0,
     'unexpected mm_* table without any RLS policy (add a policy or extend the internal allow-list): ' || v_count;
 

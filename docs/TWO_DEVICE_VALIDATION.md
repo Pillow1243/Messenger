@@ -94,6 +94,33 @@ Run on both phones, signed in and offline at turns.
 7. **Persian** — switch to `فارسی` and repeat 1–6: labels are translated, the back arrow mirrors, and
    forwarded content keeps its direction inside the bubble.
 
+### Suite H — Write-path hardening (run after migrations `20261112070000` + `20261112120000` are live)
+
+These are the first checks of the hardened backend against the real platform; the automated suite
+runs against a stub of it. Any failure here is a blocker — note the exact error text shown.
+
+1. **Photo, video, audio** — send one of each online (Suite C covers transfer; here the point is that
+   the message row is accepted at all). Before the migration these three kinds were rejected.
+2. **Retry is harmless** — start sending a text to a contact, switch to Airplane Mode before the
+   single tick appears, wait ten seconds, switch back. The message arrives exactly once and does not
+   end in a failed state.
+3. **Edit** — edit a sent text. The other phone shows the new text and the edited marker. Edit the
+   same message a second time; the second edit also arrives.
+4. **Hang up** — call, answer, hang up from the caller. The callee's screen closes within about two
+   seconds. Repeat hanging up from the callee, and repeat with a declined call.
+5. **Mute** — mute a group on Phone A; Phone B's notification setting for the same group is unchanged.
+6. **Revoke a device** — sign the same account in on both phones. On Phone A open *Account →
+   Devices* and revoke Phone B. Phone B is signed out by itself the next time it syncs and shows no
+   new messages. Sign in again on Phone B with the password: it links again, and messages sent
+   afterwards arrive.
+7. **Group removal** — remove a member from a v2 group; that member receives nothing sent
+   afterwards, and the remaining members still read each other's messages.
+8. **Typing, reactions, read receipts** — type, react and read on both sides; the indicators behave
+   as before the migration.
+9. **Message push** (needs the Firebase secrets and the redeployed `mm-push-dispatch`) — force-stop
+   the app on Phone B, send a text from Phone A: Phone B shows a notification without being opened.
+   Before the redeploy this never happened for messages, only for calls.
+
 ### Suite F — Hybrid Offline <-> Online Transitions (All 10 Scenarios)
 
 1. **Mesh -> Online**: Pair & chat offline first, then sign in online and link — verify one unified conversation thread (`Mesh + online`).
@@ -121,4 +148,5 @@ Run on both phones, signed in and offline at turns.
 | **EN + FA (`فارسی`) String Parity, RTL Icons & R8 Minification** | **Yes** (`tools/check_string_parity.sh`: 250/250 keys; `lintDebug`; R8 `assembleDemo`) | Not run in cloud sandbox | Ready via Suite F & G | Zero literal directional arrows; full `Icons.AutoMirrored` usage. |
 | **Archive, delete-for-me, forward, saved messages** | **Yes for the data paths** (`ChatRepository`/DAO logic compiles; local-only state) | Not run in cloud sandbox | **Ready via Suite G** | Forwarding and archive are pure local operations, so the radio tests only need to confirm delivery of the forwarded copy. |
 | **Social-graph authorisation hardening (S-2)** | **Yes** (`supabase/tests/rls_social_graph.sql`, plus a negative run on a pre-fix database) | N/A | Not applicable | The fix is server-side; it is live only after the owner runs `supabase db push`. |
+| **Write-path hardening (W-1 … W-19) and the client fixes that go with it** | **Yes for the database** (`supabase/tests/rls_write_path_hardening.sql`: client contract + attack matrix, on a stub of the platform); `EditPolicyTest` for edit authorship | N/A | **Not yet — Suite H** | Not live until the owner applies both pending migrations. Real PostgREST, Storage and access tokens are first exercised by Suite H. |
 | **Edge Function rate limiting & gateway JWT (S-3/S-4)** | **Yes** (Deno type-check in CI; `mm_consume_rate_limit_as` covered by the suite) | N/A | Not applicable | Requires `supabase functions deploy` for the `verify_jwt`/limiter changes to take effect live. |

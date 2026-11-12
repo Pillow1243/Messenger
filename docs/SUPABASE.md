@@ -10,17 +10,20 @@ The state below was read from the live project on 2026-11-12, not copied from ea
 
 ## Migrations
 
-Applied to the live project in this order (`list_migrations`). Each file is idempotent or
-additive.
+In timestamp order. Each file is idempotent or additive. The **Live** column is what
+`list_migrations` returned on 2026-11-12: the last two files exist only in the repository and must
+be applied by the owner (`supabase db push`, or the SQL editor), in this order.
 
-| File | Contents |
-| --- | --- |
-| `20261111120000_mm_identity_graph.sql` | profiles, devices, pre-key pool, contacts, blocks, contact requests |
-| `20261111120100_mm_messaging.sql` | conversations, members, messages, per-device envelopes, receipts, typing, reactions, attachments, reports |
-| `20261111120200_mm_notifications_calls.sql` | push tokens, notification prefs, notifications, calls, participants, call signals |
-| `20261111120300_mm_api_storage_realtime.sql` | SECURITY DEFINER RPCs, rate limiter, storage policies, realtime publication |
-| `20261111180000_mm_phase2_media_push_senderkeys_calls_devices.sql` | `mm-media` private bucket policies, `mm_sender_key_distributions`, `mm_push_log`, 5-device cap and revocation rotation, pre-key rotation, call signalling RPCs |
-| `20261112035022_mm_security_hotfix_anon_rpc_prekey.sql` | **Security hotfix.** Removes EXECUTE on every `mm_*` function from `PUBLIC` and `anon`; adds an authentication guard to `mm_claim_prekey_bundle` |
+| File | Live | Contents |
+| --- | --- | --- |
+| `20261111120000_mm_identity_graph.sql` | yes | profiles, devices, pre-key pool, contacts, blocks, contact requests |
+| `20261111120100_mm_messaging.sql` | yes | conversations, members, messages, per-device envelopes, receipts, typing, reactions, attachments, reports |
+| `20261111120200_mm_notifications_calls.sql` | yes | push tokens, notification prefs, notifications, calls, participants, call signals |
+| `20261111120300_mm_api_storage_realtime.sql` | yes | SECURITY DEFINER RPCs, rate limiter, storage policies, realtime publication |
+| `20261111180000_mm_phase2_media_push_senderkeys_calls_devices.sql` | yes | `mm-media` private bucket policies, `mm_sender_key_distributions`, `mm_push_log`, 5-device cap and revocation rotation, pre-key rotation, call signalling RPCs |
+| `20261112035022_mm_security_hotfix_anon_rpc_prekey.sql` | yes | **Security hotfix.** Removes EXECUTE on every `mm_*` function from `PUBLIC` and `anon`; adds an authentication guard to `mm_claim_prekey_bundle` |
+| `20261112070000_mm_social_graph_authz.sql` | **no** | **S-2.** Policy helpers become caller-scoped wrappers over `mm_private`; service-role rate limiter for the Edge Functions; counter pruning |
+| `20261112120000_mm_write_path_hardening.sql` | **no** | **W-1 … W-19.** Least-privilege table and column grants, tightened write policies, device/session revocation, message insert guard, media quota, corrected RPCs. See `docs/AUDIT.md` A.6 |
 
 Migration names in the live history use the same suffixes as the files, without the timestamp.
 
@@ -94,13 +97,43 @@ that is not in `supabase/config.toml`'s `schemas = ["public"]` list and on which
 
 | Function | Callable by | Purpose |
 | --- | --- | --- |
-| `mm_consume_rate_limit(action, max, window)` | `authenticated`, `service_role` | per-`auth.uid()` limiter for client RPCs |
+| `mm_consume_rate_limit(action, max, window)` | **internal** (`service_role` only since `20261112120000`) | per-`auth.uid()` limiter, called from inside the security-definer RPCs and triggers. Clients can no longer choose an action name or a limit |
+| `mm_rotate_user_groups(user)` | **internal** | re-keys every v2 group of a user; called by device registration and revocation |
+| `mm_guard_client_message()` | trigger only | validates rows that an API role inserts into `mm_messages` (kinds, device, reply, attachment, author-only edits); RPC-written system rows bypass it |
+| `mm_media_upload_allowed(name)` | `authenticated` | storage INSERT policy for `mm-media`: name shape, posting right, per-user quota (5 GiB / 20 000 objects) |
 | `mm_consume_rate_limit_as(subject, action, max, window)` | **`service_role` only** | limiter for Edge Functions, which run with the service key and have no `auth.uid()`; actions are allow-listed |
 | `mm_prune_rate_limits(older_than)` | **`service_role` only** | removes expired counter windows |
 
 `mm_private.member_exists`, `mm_private.member_role`, `mm_private.can_post`,
 `mm_private.shares_conversation`, `mm_private.is_blocked` and `mm_private.is_call_participant` are the
 unrestricted implementations. They are never exposed and no API role can execute them.
+
+### Direct table access (since `20261112120000`)
+
+`authenticated` holds `SELECT` on the readable tables (RLS decides the rows) and only these writes;
+everything else is done by RPCs. `anon` holds nothing.
+
+| Table | Direct writes |
+| --- | --- |
+| `mm_messages` | INSERT of the client columns (not `sent_at`, `edited_at`, `deleted_at`); UPDATE of `edited_at`, `deleted_at` on own rows |
+| `mm_message_envelopes`, `mm_sender_key_distributions`, `mm_attachments` | INSERT, DELETE — rows are immutable, so the client inserts with `resolution=ignore-duplicates` |
+| `mm_message_receipts` | INSERT, UPDATE (own row, message of a conversation the caller is in) |
+| `mm_typing` | INSERT, UPDATE, DELETE (own row, expiry at most 30 s ahead) |
+| `mm_reactions`, `mm_blocks` | INSERT, DELETE |
+| `mm_contacts` | INSERT, UPDATE `alias`, DELETE |
+| `mm_contact_requests` | INSERT (sender), UPDATE `status`, `responded_at` (recipient only), DELETE |
+| `mm_conversation_members` | UPDATE `muted_until`, `notification_level`, `last_read_message_id` on the caller's own row |
+| `mm_profiles` | UPDATE `display_name`, `avatar_url`, `bio`, `locale` |
+| `mm_notification_prefs`, `mm_user_settings` | INSERT, UPDATE (own row) |
+| `mm_notifications` | UPDATE `read_at`, DELETE |
+| `mm_call_signals` | DELETE (own, consumed) |
+| `mm_conversations`, `mm_devices`, `mm_calls`, `mm_call_participants`, `mm_reports`, `mm_push_tokens` | none — RPC only |
+| `mm_device_prekeys`, `mm_rate_limits`, `mm_push_log`, `mm_revoked_sessions` | none, not readable either (internal) |
+
+Error names added by this migration (returned in the PostgREST `message`): `device_revoked`
+(P0019), `too_many_prekeys` (P0020), `conversation_corrupt` (P0021), `message_not_found` (P0022),
+`target_not_found` (P0023), `kind_not_allowed` (P0024), `attachment_not_found` (P0025),
+`edit_not_allowed` (P0026), `meta_too_large` (P0027).
 
 ## Storage
 
@@ -186,10 +219,27 @@ rights, block state, call participation), privilege assertions (`anon`/`authenti
 on `mm_private` and no EXECUTE on its functions, `service_role` alone can use the subject limiter),
 legitimate-access tests (a co-member still sees membership and the SKDM fan-out path still works),
 null-safety, and an RLS-policy-coverage audit that fails if an `mm_*` table has no policy and is not
-on the two-entry internal allow-list (`mm_rate_limits`, `mm_push_log`).
+on the internal allow-list (`mm_rate_limits`, `mm_push_log`, `mm_device_prekeys`,
+`mm_revoked_sessions`).
 
-Both suites were executed on 2026-11-12 against PostgreSQL 16 through the harness above: migrations
-applied, both suites passed, migrations re-applied cleanly. The S-2 suite was additionally run
+`supabase/tests/rls_write_path_hardening.sql` is the third suite (findings W-1 … W-19). Its first
+half replays the statements the Android client sends through PostgREST, including the exact
+`ON CONFLICT` forms of `resolution=ignore-duplicates` and `resolution=merge-duplicates`, and
+requires them to succeed. Its second half is the attack matrix: direct writes to conversations,
+memberships, devices, pre-keys, calls and reports; forged system messages and edits of other
+people's messages; mis-addressed envelopes; forged receipts; revoked-session access; quota and path
+checks on the media bucket; and privilege invariants (no `anon` privilege, no direct write on an
+RPC-only table, every `SECURITY DEFINER` function pins its `search_path`).
+
+After the suites, `run.sh` runs `tools/check_edge_function_schema.py` against the same database. The
+Edge Functions address the schema through string literals (`.from("mm_messages").select("…")`), so
+a wrong column name compiles, fails at run time and - if the code ignores `error` - looks like
+"row not found". The script extracts every table, column, filter column, inline insert/update key
+and RPC argument from `supabase/functions/**/*.ts` and fails on anything the database does not
+have. It exists because that mistake shipped twice (S-4, E-1).
+
+All three suites were executed on 2026-11-12 against PostgreSQL 16 through the harness above:
+migrations applied, suites passed, migrations re-applied cleanly. The S-2 suite was additionally run
 against a deliberately un-hardened database (migrations up to `20261112035022`) where it fails at
 "an outsider must not learn that alice and bob share a conversation" - evidence that the test
 actually detects the vulnerability rather than passing vacuously.

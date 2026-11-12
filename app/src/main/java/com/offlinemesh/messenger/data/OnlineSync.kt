@@ -21,6 +21,7 @@ import com.offlinemesh.messenger.core.db.PeerProfileEntity
 import com.offlinemesh.messenger.core.db.SyncStateEntity
 import com.offlinemesh.messenger.core.security.SecretStore
 import com.offlinemesh.messenger.domain.Backoff
+import com.offlinemesh.messenger.domain.EditPolicy
 import com.offlinemesh.messenger.domain.HybridReconciler
 import com.offlinemesh.messenger.domain.OnlineState
 import com.offlinemesh.messenger.network.AuthException
@@ -728,10 +729,22 @@ class OnlineSync(
         if (remote.kind == "text-edit") {
             val target = remote.meta.str("target")
             val editedAt = remote.meta["edited_at"]?.jsonPrimitive?.longOrNull ?: remote.sentAtMs
-            if (target != null) {
-                messagesDao.getByRemoteId(target)?.let { local ->
-                    messagesDao.editBody(local.id, decoded.body, editedAt)
-                }
+            val local = target?.let { messagesDao.getByRemoteId(it) } ?: return
+            val allowed = EditPolicy.mayApply(
+                targetOutgoing = local.outgoing,
+                targetDeleted = local.deletedAt != null,
+                targetIsText = local.type == MessageType.TEXT,
+                sameConversation = local.conversationId == ensureLocalConversation(remote.conversationId),
+                targetSenderDeviceId = local.senderDeviceId,
+                editSenderDeviceId = remote.senderDeviceId,
+                targetSenderUserId = peersDao.deviceByDeviceId(local.senderDeviceId)?.userId,
+                editSenderUserId = peersDao.deviceByDeviceId(remote.senderDeviceId)?.userId
+                    ?.takeIf { it == remote.senderId }
+            )
+            if (allowed && decoded.body.isNotBlank()) {
+                messagesDao.editBody(local.id, decoded.body, editedAt)
+            } else if (!allowed) {
+                Log.w(TAG, "Ignored an edit that did not come from the author of ${local.id}")
             }
             return
         }
@@ -1793,7 +1806,7 @@ class OnlineSync(
                         groupCipherEpoch = conversation.senderKeyEpoch,
                         groupDistributionId = distUuid.toString()
                     )
-                    api.editMessage(remoteId, onlineId, message.body, editedAt)
+                    api.markMessageEdited(remoteId, onlineId, editedAt)
                 }
                 return@withContext
             }
@@ -1813,7 +1826,7 @@ class OnlineSync(
                 )
             }.getOrNull() ?: return@withContext
             runCatching { api.putEnvelopes(envelopes.map { it.copy(messageId = row.id) }) }
-            runCatching { api.editMessage(remoteId, onlineId, message.body, editedAt) }
+            runCatching { api.markMessageEdited(remoteId, onlineId, editedAt) }
         }
 
     suspend fun deleteForEveryone(message: MessageEntity, conversation: ConversationEntity) =

@@ -24,6 +24,7 @@ Status legend: **Done** (shipped and verified) · **Partial** (works, needs the 
 | --- | --- | --- |
 | S-1 anonymous RPC access and pre-key claim | Done | migration `20261112035022`, suite 8b |
 | S-2 social-graph enumeration through policy helpers | **Done** | migration `20261112070000`, `supabase/tests/rls_social_graph.sql` |
+| W-1 … W-19 direct writes around the RPCs | **Done in the repository; live rollout pending (owner)** | migration `20261112120000`, `supabase/tests/rls_write_path_hardening.sql`, `docs/AUDIT.md` A.6 |
 | S-3 gateway JWT verification on all Edge Functions | **Done** | `supabase/config.toml` (`verify_jwt = true`) |
 | S-4 Edge Function rate limiting silently broken (wrong columns) | **Done** | `supabase/functions/_shared/rate_limit.ts` + `mm_consume_rate_limit_as()` |
 | Backend suites run in CI on every push | **Done** | `.github/workflows/backend.yml` |

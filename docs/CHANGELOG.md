@@ -7,6 +7,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions refer
 
 ### Security
 
+* **W-1 … W-19 — the direct-write path around the RPCs is closed** (migration
+  `20261112120000_mm_write_path_hardening.sql`, details and reproduction notes in
+  `docs/AUDIT.md` A.6). Before this change a signed-in user with a modified client could, among
+  other things: keep using a revoked device; delete another user's pre-keys and undelivered
+  envelopes; add a silent third member to a direct chat; remove a group member without rotating
+  the group key; forge system messages and "edit" other people's messages; write read receipts on
+  messages of conversations they are not in; and upload without limit. Tables now carry explicit
+  per-statement, per-column grants, the affected RPCs are corrected, and client-inserted messages
+  pass a guard trigger. Regression suite: `supabase/tests/rls_write_path_hardening.sql`.
+  **Not yet applied to the live project.**
+* The app refuses an incoming edit that was not written by the author of the message
+  (`EditPolicy`), independently of the server-side rule.
 * **S-2 — social-graph enumeration closed.** `mm_is_member`, `mm_role`, `mm_is_admin`,
   `mm_can_post`, `mm_shares_conversation`, `mm_is_blocked` and `mm_is_call_participant` are
   `SECURITY DEFINER` helpers behind the RLS policies. Because PostgreSQL grants `EXECUTE` to
@@ -59,6 +71,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions refer
   drives the emulator directly (`sdkmanager` → `avdmanager` → boot wait → `connectedDebugAndroidTest`)
   and turns boot, SDK and JUnit failures into check annotations, so a green run is verifiable.
 * 19 new UI strings in English and Persian.
+
+### Fixed
+
+* **Push notifications for messages never fired.** `mm-push-dispatch` selected a column that does
+  not exist (`mm_messages.created_at`), treated the failed query as "message not found" and
+  answered 403 to every message wake-up. Fixed, and guarded by a new CI check
+  (`tools/check_edge_function_schema.py`) that compares the tables, columns and RPC arguments
+  named in the Edge Functions with the migrated schema. Takes effect when the function is
+  redeployed.
+* Photos, videos, audio files and message edits were rejected by the backend: the `kind` check on
+  `mm_messages` only allowed `text`, `file`, `voice`, `system`, `call` and `poll`. The constraint now lists
+  the kinds the app sends.
+* Retrying an interrupted send no longer fails on the second attempt: envelope, sender-key
+  distribution and attachment records are written as idempotent inserts.
+* The "edited" marker now reaches the server (the request also tried to change `kind`, which was
+  never allowed, so the whole update was refused).
+* Hanging up signals `bye`; the previous `hangup` kind was rejected by the database and the other
+  side only noticed through the call-state row.
+* `mm_set_call_state` had two overloads that made a call without an end reason ambiguous.
 
 ### Changed
 

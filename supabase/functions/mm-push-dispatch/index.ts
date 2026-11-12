@@ -95,6 +95,12 @@ async function getFcmAccessToken(sa: ServiceAccount): Promise<string> {
   return token;
 }
 
+// The database message stays in the function log: it can contain identifiers and policy text.
+function lookupFailed(what: string, error: { code?: string; message?: string }) {
+  console.error(`mm-push-dispatch: ${what} lookup failed`, error.code ?? "unknown");
+  return json(500, { error: "lookup_failed", what });
+}
+
 function isWithinQuietHours(nowHourUtc: number, start: number | null, end: number | null): boolean {
   if (start === null || end === null || start === end) return false;
   if (start < end) return nowHourUtc >= start && nowHourUtc < end;
@@ -160,41 +166,50 @@ Deno.serve(async (req) => {
   }
 
   // Verify caller membership & ownership of the referenced message/call.
-  const { data: conv } = await admin
+  //
+  // Every lookup checks `error` separately from "no row": a query that fails (for example because
+  // it names a column that does not exist) must surface as a server error, not be mistaken for
+  // "not found" and answered with a misleading 403/404. The message lookup below used to select
+  // `created_at`, which mm_messages does not have, so every message wake-up was refused.
+  const { data: conv, error: convErr } = await admin
     .from("mm_conversations")
     .select("id, type, deleted_at")
     .eq("id", conversationId)
     .maybeSingle();
+  if (convErr) return lookupFailed("conversation", convErr);
   if (!conv || conv.deleted_at) return json(404, { error: "conversation_not_found" });
 
-  const { data: callerMember } = await admin
+  const { data: callerMember, error: memberErr } = await admin
     .from("mm_conversation_members")
     .select("role")
     .eq("conversation_id", conversationId)
     .eq("user_id", callerId)
     .maybeSingle();
+  if (memberErr) return lookupFailed("membership", memberErr);
   if (!callerMember) return json(403, { error: "not_a_member" });
 
   if (eventKind === "message") {
-    const { data: msg } = await admin
+    const { data: msg, error: msgErr } = await admin
       .from("mm_messages")
-      .select("id, sender_id, created_at, deleted_at")
+      .select("id, sender_id, sent_at, deleted_at")
       .eq("id", targetId)
       .eq("conversation_id", conversationId)
       .maybeSingle();
+    if (msgErr) return lookupFailed("message", msgErr);
     if (!msg || msg.deleted_at || msg.sender_id !== callerId) {
       return json(403, { error: "message_not_owned_by_caller" });
     }
-    if (now.getTime() - new Date(msg.created_at).getTime() > 10 * 60_000) {
+    if (now.getTime() - new Date(msg.sent_at).getTime() > 10 * 60_000) {
       return json(410, { error: "wakeup_expired" });
     }
   } else {
-    const { data: call } = await admin
+    const { data: call, error: callErr } = await admin
       .from("mm_calls")
       .select("id, initiator_id, state, started_at")
       .eq("id", targetId)
       .eq("conversation_id", conversationId)
       .maybeSingle();
+    if (callErr) return lookupFailed("call", callErr);
     if (!call || call.initiator_id !== callerId) {
       return json(403, { error: "call_not_owned_by_caller" });
     }
@@ -272,14 +287,28 @@ Deno.serve(async (req) => {
   }
 
   // Record zero-plaintext notification rows for Realtime/foreground catchup (messages; calls already insert one in mm_create_call).
+  // A repeated dispatch for the same message (client retry) must not add a second row.
   if (eventKind === "message") {
-    const notifRows = eligibleUserIds.map((uid) => ({
-      user_id: uid,
-      kind: "message",
-      conversation_id: conversationId,
-      message_id: targetId,
-    }));
-    await admin.from("mm_notifications").insert(notifRows);
+    const { data: existing, error: existingErr } = await admin
+      .from("mm_notifications")
+      .select("user_id")
+      .eq("message_id", targetId)
+      .eq("kind", "message")
+      .in("user_id", eligibleUserIds);
+    if (existingErr) return lookupFailed("notification", existingErr);
+    const alreadyNotified = new Set((existing || []).map((n) => n.user_id as string));
+    const notifRows = eligibleUserIds
+      .filter((uid) => !alreadyNotified.has(uid))
+      .map((uid) => ({
+        user_id: uid,
+        kind: "message",
+        conversation_id: conversationId,
+        message_id: targetId,
+      }));
+    if (notifRows.length > 0) {
+      const { error: notifErr } = await admin.from("mm_notifications").insert(notifRows);
+      if (notifErr) console.error("mm-push-dispatch: notification insert failed", notifErr.code ?? "unknown");
+    }
   }
 
   // Fetch active tokens on non-revoked devices.
