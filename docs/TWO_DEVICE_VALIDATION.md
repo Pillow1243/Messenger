@@ -31,14 +31,14 @@ Grant **Nearby devices / Bluetooth / Location**, **Notifications**, **Microphone
 
 1. Enable **Airplane Mode** on both Phone A and Phone B, then re-enable **Bluetooth** and **Wi-Fi** (without connecting to any internet router).
 2. Complete onboarding on Phone A ("Alice") and Phone B ("Bob").
-3. Open **Contacts -> My QR** on Phone A; scan from Phone B (**Scan QR**), and vice versa. Verify the **60-digit Safety Number** matches identically on both phones and tap **Mark Verified**.
+3. Open **Contacts → My contact code** on Phone A; scan it from Phone B with **Scan code** (or paste the code under **Add contact**), and vice versa. Verify the **60-digit Safety Number** matches identically on both phones, then tap **Mark as verified**.
 4. Open **Nearby** on both phones, wait 5–15 seconds for BLE/Wi-Fi Direct discovery, and tap to connect.
 5. Exchange text messages, a recorded **Voice Note**, and an attached image/PDF (< 50 MB). Verify delivery status transitions `Queued -> Sent -> Delivered`.
 
 ### Suite B — Online Accounts, Multi-Device & Safety Numbers
 
 1. Disable Airplane Mode (enable Wi-Fi or cellular internet) on both phones.
-2. Open **Settings -> Online Account**, create/sign into Account A on Phone A and Account B on Phone B.
+2. Open the **Account** tab, use **Create account** (or **Sign in**) for Account A on Phone A and Account B on Phone B.
 3. Verify **Account** displays `1 of 5 active devices` with the **This device** badge and platform/model metadata.
 4. Tap **Rotate pre-keys now** on Phone A and verify no errors occur.
 5. *(Optional 3rd device)* Sign into Account A on a secondary phone/tablet: verify `2 of 5 active devices` appears, verify per-device safety numbers on Phone B's Contact Detail screen, then tap **Revoke** on the secondary device from Phone A and confirm the revoked device immediately signs out with `This device was revoked from your account`.
@@ -56,7 +56,7 @@ Grant **Nearby devices / Bluetooth / Location**, **Notifications**, **Microphone
 
 ### Suite D — Audited Signal Sender Keys (`v2`) Groups & Key Rotation
 
-1. Create a new group from **Chats -> New Group** while signed in with linked contacts (or via online group creation).
+1. On the **Chats** screen, tap the extended **New group** button (shown once you have at least one contact). Use contacts that are linked to an online account if you are testing online group delivery.
 2. Open the group chat and verify the subtitle reads **`Signal Sender Keys (v2) · Epoch #1`**.
 3. Send messages and attachments: verify all members decrypt immediately.
 4. Tap the **Shield** icon in the top bar (**Group security & members**):
@@ -66,12 +66,12 @@ Grant **Nearby devices / Bluetooth / Location**, **Notifications**, **Microphone
 ### Suite E — 1:1 WebRTC Voice & Video Calling
 
 1. Open the 1:1 direct chat between Alice and Bob (verify Call icons are **present on 1:1 Direct chats** and **absent on Groups/Channels**).
-2. Tap **Voice Call** on Phone A:
+2. Tap **Voice call** on Phone A:
    * Verify Phone B displays the full-screen incoming call UI (or incoming call notification if backgrounded).
    * Tap **Decline** on Phone B -> verify Phone A transitions cleanly to `Call ended`.
 3. Tap **Video Call** on Phone A and **Accept** on Phone B:
    * Verify bidirectional audio, remote video full-screen feed, and local PiP camera preview.
-   * Test **Mute/Unmute**, **Speakerphone**, **Camera On/Off**, **Flip Front/Back Camera**, and **End Call**.
+   * Test **Mute** / **Unmute**, **Speaker**, **Camera** (on/off) and **Flip**, then **End**.
 
 ### Suite F — Hybrid Offline <-> Online Transitions (All 10 Scenarios)
 
@@ -81,7 +81,7 @@ Grant **Nearby devices / Bluetooth / Location**, **Notifications**, **Microphone
 4. **Mid-Chat Wi-Fi Drop**: While `Mesh + online`, turn off Wi-Fi router — verify uninterrupted delivery via Nearby mesh.
 5. **Process Kill Recovery**: Force-stop the app mid-send/transfer and relaunch — verify `recoverInterruptedState()` resumes queued messages/transfers without duplicates.
 6. **Cross-Transport Dedup**: Send while both `MESH` and `ONLINE` are active (`Transport.BOTH`) — verify recipient sees **exactly one** message row (`transport = BOTH`).
-7. **Persian (`فارسی`) RTL**: Switch **Settings -> Language -> فارسی** on Phone A — verify full right-to-left mirroring, mirrored directional icons (`ArrowBack`, `ArrowForward`, `Reply`, `Send`), and zero raw untranslated keys.
+7. **Persian (`فارسی`) RTL**: Switch the language chip **فارسی** on the **Settings** screen on Phone A — verify full right-to-left mirroring, mirrored directional icons (`ArrowBack`, `ArrowForward`, `Reply`, `Send`), and zero raw untranslated keys.
 
 ---
 

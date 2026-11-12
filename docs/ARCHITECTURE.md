@@ -69,11 +69,19 @@ sendText() ──► persist message (QUEUED) ──► deliverMessage()
 
 ## Storage
 
-Room v2. New columns are nullable or defaulted; `MIGRATION_1_2` is additive only and the schema is
-exported to `app/schemas` and checked in CI. Tables added: `online_outbox`, `sync_state`,
-`peer_devices`, `peer_profiles`. Existing tables gained the online columns they need
-(`conversations.online_id/peer_user_id/draft/...`, `messages.remote_id/client_msg_id/transport/...`).
-No table was dropped, renamed or rewritten, so an upgraded install keeps every message.
+Room **v3** (`AppDatabase.CURRENT = 3`, schemas `app/schemas/.../2.json` and `3.json`). Migrations:
+
+* `MIGRATION_1_2` is additive: it adds online columns to `conversations`, `messages` and `contacts`,
+  the `plaintextSha256` column on `file_transfers`, and the tables `online_outbox`, `sync_state`,
+  `peer_devices` and `peer_profiles`.
+* `MIGRATION_2_3` is additive: group encryption metadata on `conversations` (`encryptionVersion`,
+  `senderKeyEpoch`, `distributionId`, `mutedUntil`, `myRole`) and file metadata on `messages`
+  (`fileMime`, `fileSha256`), plus the tables `signal_sender_keys`, `group_skdm_states` and
+  `call_logs`.
+
+Every new column is nullable or has a default, so SQLite accepts the `ALTER TABLE`. No table was
+dropped, renamed or rewritten, so an upgraded install keeps every message. `MigrationTest` checks the
+statements, and CI fails if an exported schema changes without being committed (`app/schemas`).
 
 ## UI
 

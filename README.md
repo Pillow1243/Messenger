@@ -107,7 +107,7 @@ keytool -genkeypair -v -keystore release.keystore -alias offlinemesh \
         -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-Provide `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD` to the release
+Provide `MESSENGER_KEYSTORE_BASE64`, `MESSENGER_KEYSTORE_PASSWORD`, `MESSENGER_KEY_ALIAS` and `MESSENGER_KEY_PASSWORD` as repository secrets for the release
 workflow. `-PdemoSign=true` produces a debug‑signed **demo** variant (`.demo` application id) that is
 what the CI publishes to the `demo-latest` prerelease; it is not an upgrade path for a real install.
 
@@ -115,7 +115,7 @@ what the CI publishes to the `demo-latest` prerelease; it is not an upgrade path
 
 * `ci.yml` — every push and PR: unit tests → lint → assemble debug/demo/release → Room schema drift
   check → artifact upload. All actions are pinned to commit SHAs.
-* `release.yml` — tags only: signed APK + AAB, checksums, build metadata, release notes; concurrency
+* `release.yml` — `v*` tags only: signed APK, checksums, build metadata, release notes; concurrency
   is serialised per tag and signing is skipped (not faked) when secrets are absent.
 
 ## Permissions
@@ -163,23 +163,31 @@ live project and asserts the whole permission matrix.
 
 ## Known limitations
 
-1. **Online media upload is not wired.** Mesh files work; sending a file over the online transport is
-   refused with `media_online_unsupported` rather than silently lost. The bucket, RLS and signed‑URL
-   path exist.
-2. **Calls are not implemented.** No WebRTC stack and no call button that pretends otherwise.
-3. **Group encryption is per‑device fan‑out**, not Sender Keys: correct, but O(devices) ciphertexts.
-4. **R8/minify stays off** until a shrunk build has been exercised on physical devices (libsignal's
-   JNI bridge resolves symbols by name).
-5. **Background service** can still be killed by aggressive OEM power managers.
-6. **No physical‑device validation of the online path yet** — it compiles, unit tests pass and the
-   backend assertions pass, but end‑to‑end realtime behaviour needs two real devices.
+Verified against the source tree and the live Supabase project on 2026-11-12. Items are listed
+because they are genuinely open, not because they are hidden.
+
+1. **Online media is implemented but needs two-device validation.** Encrypted upload to the private
+   `mm-media` bucket, resumable transfer, thumbnails and progress/cancel/retry exist in code; the
+   end-to-end path has not been exercised on physical phones yet (see
+   [`docs/TWO_DEVICE_VALIDATION.md`](docs/TWO_DEVICE_VALIDATION.md)).
+2. **Group calls are not implemented.** 1:1 WebRTC voice and video are. Group calls require an SFU;
+   none is deployed, so no group call button exists.
+3. **Social-graph helper functions are callable by any signed-in user** (`mm_shares_conversation`,
+   `mm_is_blocked`, `mm_is_member` take arbitrary user/conversation ids). Anonymous access was closed
+   by migration `20261112035022`; tightening the signed-in path needs its own change, because the
+   same helpers back the RLS policies. Tracked in [`docs/AUDIT.md`](docs/AUDIT.md).
+4. **Background service** can still be killed by aggressive OEM power managers.
+5. **Stories, polls, scheduled messages, bots and Mini Apps are not implemented.** They are roadmap
+   items, not partial features.
+6. **No independent cryptographic audit has been performed.** The protocols are the audited
+   libsignal implementation, but the integration is not third-party reviewed.
 
 ## Roadmap
 
-* Online media: encrypted upload, resumable transfer, thumbnails, progress/cancel.
-* Sender Keys for large groups.
-* WebRTC calls with the `mm_calls` signalling tables already in place.
-* Media playback, message pinning UI, translation (opt‑in), scheduled messages.
+* Physical two-device validation of the online media, sync and call paths.
+* SFU-based group calls, then stories and polls.
+* Tighter social-graph authorization (see limitation 3).
+* Scheduled and silent messages, bots and Mini Apps (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 ## License
 
